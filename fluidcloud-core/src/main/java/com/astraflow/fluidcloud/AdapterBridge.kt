@@ -23,7 +23,7 @@ object AdapterBridge {
     private var onAccepted: () -> Unit = {}
     /** 星河岛报来接手情况(在主线程上处理) */
     private var onState: (Bundle) -> Unit = {}
-    /** 见面的结果:connected、absent(系统界面里还没有星河岛),或 refused:原因(交给插件的页面) */
+    /** 见面的结果:connected、testing(按机主允许的本机测试收下)、absent(系统界面里还没有星河岛),或 refused:原因(交给插件的页面) */
     private var onStatus: (String) -> Unit = {}
 
     private val endpoint = Function<Bundle, Bundle?> { request -> runCatching { handle(request) }.onFailure { Log.e(TAG, "request failed", it) }.getOrNull() }
@@ -69,10 +69,19 @@ object AdapterBridge {
             if (paused) putBoolean(EventBridge.KEY_PAUSED, true)
         })
         if (reply == null) { main.post { runCatching { onStatus(STATUS_ABSENT) } }; return }
+        val wasAccepted = accepted
         accepted = !paused && reply.getBoolean(EventBridge.KEY_ACCEPTED, false)
-        val status = if (accepted) STATUS_CONNECTED else STATUS_REFUSED + reply.getString(EventBridge.KEY_REASON).orEmpty()
+        val status = when {
+            !accepted -> STATUS_REFUSED + reply.getString(EventBridge.KEY_REASON).orEmpty()
+            reply.getBoolean(EventBridge.KEY_LOCAL_TEST) -> STATUS_TESTING
+            else -> STATUS_CONNECTED
+        }
         if (accepted) main.post { runCatching(onAccepted) }
-        else Log.w(TAG, "island refused: ${reply.getString(EventBridge.KEY_REASON)}")
+        else {
+            Log.w(TAG, "island refused: ${reply.getString(EventBridge.KEY_REASON)}")
+            // 收下过、现在不再收下(机主停止了本机测试):当作星河岛什么都不接手,系统胶囊全部交还系统
+            if (wasAccepted) main.post { runCatching { onState(Bundle()) } }
+        }
         main.post { runCatching { onStatus(status) } }
     }
 
@@ -92,6 +101,8 @@ object AdapterBridge {
     }
 
     const val STATUS_CONNECTED = "connected"
+    /** 签名与星流不同(例如自行编译的安装包),星河岛按机主在星流里允许的本机测试收下了插件 */
+    const val STATUS_TESTING = "testing"
     const val STATUS_ABSENT = "absent"
     const val STATUS_REFUSED = "refused:"
 

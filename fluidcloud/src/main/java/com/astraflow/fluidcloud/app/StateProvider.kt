@@ -9,9 +9,11 @@ import android.os.Bundle
 import com.astraflow.fluidcloud.BuildConfig
 import com.astraflow.fluidcloud.FluidCloudSettings
 import com.astraisland.events.AdapterApp
+import java.security.MessageDigest
 
 /**
- * 星流向插件取状态、交原来的设置、请它重新开启(约定见 [AdapterApp]);只回答和插件同一把签名的星流。
+ * 星流向插件取状态、交原来的设置、请它重新开启(约定见 [AdapterApp]);只回答官方星流:签名与插件相同,
+ * 或是星流的正式签名(自行编译的插件也回答官方星流)。
  * 取状态时插件进程可能刚被这一问叫起来,模块框架稍后才交来服务:最多等 [ENABLED_WAIT_MS],
  * 插件没在 LSPosed 里启用时就等满这么久。
  */
@@ -40,9 +42,17 @@ class StateProvider : ContentProvider() {
     private fun fromHost(): Boolean {
         val context = context ?: return false
         val caller = runCatching { callingPackage }.getOrNull() ?: return false
-        return caller == HOST_PACKAGE &&
-            context.packageManager.checkSignatures(caller, context.packageName) == PackageManager.SIGNATURE_MATCH
+        if (caller != AdapterApp.HOST_PACKAGE) return false
+        val packageManager = context.packageManager
+        return packageManager.checkSignatures(caller, context.packageName) == PackageManager.SIGNATURE_MATCH ||
+            AdapterApp.HOST_CERT_SHA256 in signers(packageManager, caller)
     }
+
+    /** 安装包签名证书的 SHA-256(小写十六进制);读不到时为空 */
+    private fun signers(packageManager: PackageManager, pkg: String): Set<String> = runCatching {
+        packageManager.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners.orEmpty()
+            .mapTo(HashSet()) { signer -> MessageDigest.getInstance("SHA-256").digest(signer.toByteArray()).joinToString("") { "%02x".format(it) } }
+    }.getOrDefault(emptySet())
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
     override fun getType(uri: Uri): String? = null
@@ -51,7 +61,6 @@ class StateProvider : ContentProvider() {
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
 
     private companion object {
-        const val HOST_PACKAGE = "com.astraflow.tool"
         const val ENABLED_WAIT_MS = 2_000L
     }
 }

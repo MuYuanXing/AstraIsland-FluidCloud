@@ -27,14 +27,18 @@ object EventBridge {
     /**
      * 打招呼:[KEY_PACKAGE]、[KEY_VERSION_CODE]、[KEY_VERSION];回 [KEY_ACCEPTED] 和不收时的 [KEY_REASON]。
      * 接入件因为多次出错自动暂停时带 [KEY_PAUSED],星河岛不收它,原因写 [REASON_PAUSED]。
+     * 签名与星流不同时原因写 [REASON_SIGNATURE];机主在星流里允许了在本机测试这个接入件(例如自行编译的安装包)时照收,
+     * 回复带 [KEY_LOCAL_TEST]。
      */
     const val OP_HELLO = "hello"
     const val KEY_PACKAGE = "package"
     const val KEY_VERSION_CODE = "versionCode"
     const val KEY_PAUSED = "paused"
     const val REASON_PAUSED = "paused"
+    const val REASON_SIGNATURE = "signature mismatch"
     const val KEY_ACCEPTED = "accepted"
     const val KEY_REASON = "reason"
+    const val KEY_LOCAL_TEST = "localTest"
     /** 全部事件([KEY_EVENTS],编码见 SystemEventCodec)和接入件的设置([KEY_SETTINGS]) */
     const val OP_EVENTS = "events"
     const val KEY_EVENTS = "events"
@@ -48,6 +52,7 @@ object EventBridge {
      * [KEY_SPENT] 只亮一下、已经亮完的,[KEY_ALWAYS] 一律藏起的(充电胶囊、电池提示),[KEY_PENDING] 刚送到、还在等内容的;
      * [KEY_ACTIVE] 星河岛开着且在管事,[KEY_YIELD_ALLOWED] 星河岛此刻能露面,[KEY_SHOWN_KINDS] 星河岛此刻显示哪些种类的事
      * (事件种类编号;刚送到、还没读出内容的新事件,系统胶囊按它先定让不让位)。
+     * 星河岛不再收下已连着的接入件时(机主停止了本机测试),先报一次什么都不接手、不在管事,系统胶囊全部交还系统。
      */
     const val OP_STATE = "state"
     const val KEY_HANDLED = "handled"

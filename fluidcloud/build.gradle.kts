@@ -8,11 +8,11 @@ plugins {
 
 // 插件「流体云事件接入」:OPPO、一加、真我手机上的 LSPosed 模块,只进系统界面。
 // 读系统流体云送来的内容交给星河岛、把系统自己的同一个胶囊藏起来、星河岛上点按钮时交回系统执行(核心在 :fluidcloud-core)。
-// 星河岛只收和星流同一把签名的插件:正式包只由星流维护者用正式签名打出。
+// 星河岛只收和星流同一把签名的插件(自行编译的测试用安装包要机主在星流里允许本机测试):正式包只由星流维护者用正式签名打出。
 
 // 版本:「X.Y.Z」→ X*10000+Y*100+Z(Y、Z 都在 0 到 99 之间);每次在插件商店上架,版本号必须变大。
-val pluginVersionName = "1.0.3"
-val pluginVersionCode = 10003
+val pluginVersionName = "1.0.4"
+val pluginVersionCode = 10004
 val pluginVersionMatch = Regex("""^(\d+)\.(\d{1,2})\.(\d{1,2})$""").matchEntire(pluginVersionName)
     ?: throw GradleException("pluginVersionName must be X.Y.Z: $pluginVersionName")
 val (pluginMajor, pluginMinor, pluginPatch) = pluginVersionMatch.destructured

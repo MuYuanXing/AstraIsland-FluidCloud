@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.astraflow.fluidcloud.AdapterBridge
 import com.astraflow.fluidcloud.FluidCloudSettings
+import com.astraisland.events.EventBridge
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.delay
@@ -275,6 +276,7 @@ internal data class Health(
     fun islandText() = when {
         pausedAt != null -> "暂停中"
         island == AdapterBridge.STATUS_CONNECTED -> "已连接"
+        island == AdapterBridge.STATUS_TESTING -> "已连接（本机测试）"
         island == AdapterBridge.STATUS_ABSENT -> "未找到"
         island?.startsWith(REFUSED_VERSION) == true -> "版本不一致"
         island?.startsWith(AdapterBridge.STATUS_REFUSED) == true -> "未接受"
@@ -296,6 +298,7 @@ internal data class Health(
         running == null -> StatusNote(StatusRow.RUNNING, "需重启系统界面")
         island == AdapterBridge.STATUS_ABSENT || island == null -> StatusNote(StatusRow.ISLAND, "需在 LSPosed 中启用星流并重启系统界面")
         island?.startsWith(REFUSED_VERSION) == true -> StatusNote(StatusRow.ISLAND, "需将星流与本插件更新至最新版本")
+        island == REFUSED_SIGNATURE -> StatusNote(StatusRow.ISLAND, "需在星流中允许本机测试，或从插件商店重新安装本插件")
         island?.startsWith(AdapterBridge.STATUS_REFUSED) == true -> StatusNote(StatusRow.ISLAND, "需从星流的插件商店重新安装本插件")
         capsule == CAPSULE_UNAVAILABLE -> StatusNote(StatusRow.CAPSULE, CAPSULE_UNAVAILABLE_NOTE)
         else -> null
@@ -308,6 +311,8 @@ internal data class Health(
         const val CAPSULE_AVAILABLE = "available"
         const val CAPSULE_UNAVAILABLE = "unavailable"
         const val REFUSED_VERSION = AdapterBridge.STATUS_REFUSED + "version"
+        /** 签名与星流不同(例如自行编译的安装包),机主还没有在星流里允许本机测试 */
+        const val REFUSED_SIGNATURE = AdapterBridge.STATUS_REFUSED + EventBridge.REASON_SIGNATURE
     }
 }
 

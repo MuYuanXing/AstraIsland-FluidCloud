@@ -49,7 +49,14 @@ class PluginShapeTest {
         problem(health(running = null)).let { assertEquals(StatusRow.RUNNING, it.row); assertTrue(it.text.contains("重启系统界面")) }
         problem(health(island = AdapterBridge.STATUS_ABSENT)).let { assertEquals(StatusRow.ISLAND, it.row); assertTrue(it.text.contains("启用星流")) }
         problem(health(island = AdapterBridge.STATUS_REFUSED + "version 2")).let { assertEquals(StatusRow.ISLAND, it.row); assertTrue(it.text.contains("更新")) }
-        problem(health(island = AdapterBridge.STATUS_REFUSED + "signature mismatch")).let { assertEquals(StatusRow.ISLAND, it.row); assertTrue(it.text.contains("重新安装")) }
+        problem(health(island = AdapterBridge.STATUS_REFUSED + "signature mismatch")).let {
+            assertEquals(StatusRow.ISLAND, it.row)
+            assertTrue("自行编译的插件:去星流允许本机测试,或装回官方插件", it.text.contains("允许本机测试") && it.text.contains("重新安装"))
+        }
+        health(island = AdapterBridge.STATUS_TESTING).let {
+            assertEquals("按本机测试收下也写已连接", "已连接（本机测试）", it.islandText())
+            assertNull("按本机测试收下能用,不写原因", it.problem())
+        }
         problem(health(capsule = Health.CAPSULE_UNAVAILABLE)).let { assertEquals(StatusRow.CAPSULE, it.row); assertEquals(CAPSULE_UNAVAILABLE_NOTE, it.text) }
         assertNull("能用时不写", health().problem())
         assertNull("还在检查时不写,各行右边写「检查中」", Health(false, null, null, null, checked = false).problem())
@@ -60,6 +67,7 @@ class PluginShapeTest {
         problem(paused).let { assertEquals("暂停时先说暂停:$it", StatusRow.RUNNING, it.row); assertTrue(it.text.contains("自动暂停")) }
         val notes = listOf(health(enabled = false, running = null), health(running = null), health(island = null), paused,
             health(island = AdapterBridge.STATUS_REFUSED + "version 2"), health(island = AdapterBridge.STATUS_REFUSED + "x"),
+            health(island = AdapterBridge.STATUS_REFUSED + "signature mismatch"),
             health(capsule = Health.CAPSULE_UNAVAILABLE)).map { problem(it).text } + STATUS_OFF
         for (note in notes) assertTrue("行名下面的短提示不加句号:$note", !note.endsWith("。"))
     }

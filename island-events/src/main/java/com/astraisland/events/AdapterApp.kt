@@ -2,11 +2,18 @@ package com.astraisland.events
 
 /**
  * 星流与接入件应用(例如插件「流体云事件接入」)之间的约定:星流经接入件应用的 [authority] 取它的状态、交原来的设置。
- * 接入件应用只回答和它同一把签名的星流。设置项的键与见面时交给星河岛的同名([EventBridge.SETTING_ACCESS] 等)。
+ * 接入件应用只回答官方星流:签名与接入件相同,或是星流的正式签名([HOST_CERT_SHA256]),自行编译的接入件也能回答官方星流。
+ * 设置项的键与见面时交给星河岛的同名([EventBridge.SETTING_ACCESS] 等)。
  */
 object AdapterApp {
     /** 插件「流体云事件接入」的包名 */
     const val FLUID_CLOUD_PACKAGE = "com.astraflow.fluidcloud"
+
+    /** 星流的包名 */
+    const val HOST_PACKAGE = "com.astraflow.tool"
+
+    /** 星流正式签名证书的 SHA-256(小写十六进制) */
+    const val HOST_CERT_SHA256 = "3c5f77034e84b07a75113c5c5c472cdf4a2e1c78b32485a19b996dafa9839245"
 
     fun authority(adapterPackage: String) = "$adapterPackage.state"
 
