@@ -311,6 +311,7 @@ object OfficialCloudServices {
      * 其它服务原样返回。[nowElapsedMs] 用来把只有文字的时间换成会走的计时。标题、说明怎么写由星河岛按标准事件决定。
      */
     fun refine(snapshot: CloudSnapshot, content: CloudContent, nowElapsedMs: Long): CloudContent = when (snapshot.serviceId) {
+        CALL -> call(snapshot, content, nowElapsedMs)
         STOPWATCH -> stopwatch(snapshot, content, nowElapsedMs)
         TIMER -> timer(snapshot, content, nowElapsedMs)
         ALARM -> alarm(snapshot, content, nowElapsedMs)
@@ -319,6 +320,27 @@ object OfficialCloudServices {
         SOUND_RECORDER -> if (completionPage(snapshot)) content else soundRecorder(snapshot, content, nowElapsedMs)
         else -> content
     }
+
+    /**
+     * 通话:系统通话卡片没有自己走的计时。接通后来电界面每秒把通话时长写成文字(胶囊右边那一段,「00:05」「1:02:03」),
+     * 岛按收到时的时长往后走;拨号、来电时那一段写的是状态字(例如「正在呼叫」)或号码,不是时长,不计时。
+     */
+    private fun call(snapshot: CloudSnapshot, content: CloudContent, now: Long): CloudContent {
+        val elapsed = callDuration(snapshot.data["callInfo"]) ?: return content
+        val received = snapshot.receivedAtElapsedMs.takeIf { it > 0 } ?: now
+        return content.copy(timer = CloudTimer(received - elapsed, countdown = false, elapsedClock = true))
+    }
+
+    /** 来电界面写的通话时长(「分:秒」「时:分:秒」)换成毫秒;状态字、号码这类不是时长的为 null */
+    fun callDuration(text: String?): Long? {
+        val m = CALL_DURATION.matchEntire(text?.trim() ?: return null) ?: return null
+        val parts = listOfNotNull(m.groupValues[1], m.groupValues[2], m.groupValues[3].takeIf { it.isNotEmpty() }).map { it.toLong() }
+        if (parts.drop(1).any { it >= 60 }) return null
+        val seconds = if (parts.size == 3) parts[0] * 3600 + parts[1] * 60 + parts[2] else parts[0] * 60 + parts[1]
+        return seconds * 1000L
+    }
+
+    private val CALL_DURATION = Regex("""^(\d{1,3}):(\d{2})(?::(\d{2}))?$""")
 
     /**
      * 秒表:系统每秒送一次「分:秒」文字,没有起点;岛按收到时的时长往后走。暂停时停住。

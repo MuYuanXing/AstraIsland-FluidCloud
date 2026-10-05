@@ -3,7 +3,7 @@
   "vendor": "oppo",
   "description": "OPPO 系(ColorOS 流体云)对照表:流体云的服务号、服务意图、卡片说明文件的位置代号和数据字段,各对应标准清单(island-system-events.v1.json)的哪一项。服务号与位置代号以接入代码(翻译成标准事件的 OfficialCloudTranslator 与服务归类 OfficialCloudServices)为准,由 node tools/contracts/validate-island-system-events.mjs 逐项核对。",
   "kinds": {
-    "call": { "services": ["268451840"], "callState": "卡片按钮里有「接听」、没有「免提」,或通知标着全屏来电(fullScreenIntent、in_full_screen_mode)时是 incoming,其余是 ongoing;按钮的用途按按钮上的字认(接听、拒接、挂断、免提)" },
+    "call": { "services": ["268451840"], "callState": "卡片按钮里有「接听」、没有「免提」,或通知标着全屏来电(fullScreenIntent、in_full_screen_mode)时是 incoming,其余是 ongoing;按钮的用途按按钮上的字认(接听、拒接、挂断、免提)", "speaker": "免提按钮的 checked 按按钮图标的文件名:含 speaker_on 为开,含 speaker_off 为关,都不含时不填" },
     "satelliteCall": { "services": ["268451909"] },
     "timer": { "services": ["268451854"] },
     "stopwatch": { "services": ["268451930"] },
@@ -104,6 +104,7 @@
     "alarm_description": "alarmLabel",
     "alarm_time": "alarmTime",
     "alarm_alarm_ring": "ringing",
+    "callInfo": "通话的 timer(写的是「分:秒」「时:分:秒」时长时按收到时往后走;写的是正在呼叫这类状态字或号码时不计时)",
     "chronometerValue": "录屏的 timer",
     "recordStateText": "录屏状态那句(说明文件 C10 位置写的就是它,recordStateText 按位置读)",
     "recordInProgress": "录音在录还是暂停(按钮的用途)",

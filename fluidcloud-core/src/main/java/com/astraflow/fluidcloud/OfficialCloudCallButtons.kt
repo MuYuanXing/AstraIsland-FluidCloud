@@ -25,6 +25,19 @@ object OfficialCloudCallButtons {
         else -> "call:${role.name.lowercase()}"
     }
 
+    /**
+     * 免提按钮开没开,照系统通话卡片自己画的:来电界面开着免提时按钮用「免提开」那张图(floating_window_btn_speaker_on),
+     * 关着用「免提关」那张(floating_window_btn_speaker_off),切换后它马上换图;认不出时为空。
+     */
+    fun speakerChecked(icon: String?): Boolean? {
+        val name = icon?.lowercase() ?: return null
+        return when {
+            "speaker_on" in name -> true
+            "speaker_off" in name -> false
+            else -> null
+        }
+    }
+
     fun incoming(buttons: List<CloudButton>, ringingExtra: Boolean): Boolean {
         val roles = buttons.map { roleOf(it.label) }
         if (Role.SPEAKER in roles) return false

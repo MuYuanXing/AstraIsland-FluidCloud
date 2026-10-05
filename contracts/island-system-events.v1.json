@@ -30,7 +30,7 @@
     ]
   },
   "kinds": [
-    { "id": "call", "name": "来电与通话", "drawnAs": "通话卡片;免提开没开由星河岛自己问系统", "fields": [
+    { "id": "call", "name": "来电与通话", "drawnAs": "通话卡片;接通后的通话时长放在卡片的 timer,没接通时不填;免提按钮写成开关(checked)", "fields": [
       { "id": "callState", "type": "enum", "values": ["incoming", "dialing", "ongoing"], "meaning": "来电、正在呼叫、通话中;读不出正在呼叫时只给来电或通话中" }
     ] },
     { "id": "satelliteCall", "name": "卫星通话", "drawnAs": "通用卡片,照通话的样子(电话符号、通话的绿色)" },

@@ -328,7 +328,10 @@ object OfficialCloudDecoder {
                     val label = text.ifBlank { templateNode?.let { template.label(it, snapshot.data) }.orEmpty() }
                     when {
                         text.isNotBlank() && target != null -> buttons += target
-                        action != null && label.isNotBlank() -> buttons += CloudButton(OfficialCloudCallButtons.stableId(label, "tpl:${node.level}"), label, action = action)
+                        // 免提开没开照系统按钮用的图(切换后来电界面马上换图),不另外去问声音服务
+                        action != null && label.isNotBlank() -> buttons += CloudButton(OfficialCloudCallButtons.stableId(label, "tpl:${node.level}"), label, action = action,
+                            checked = OfficialCloudCallButtons.speakerChecked(props["icon"])
+                                .takeIf { OfficialCloudCallButtons.roleOf(label) == OfficialCloudCallButtons.Role.SPEAKER })
                         else -> gaps += "button-target"
                     }
                 }
