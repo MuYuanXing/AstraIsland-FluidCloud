@@ -11,8 +11,8 @@ plugins {
 // 星河岛只收和星流同一把签名的插件:正式包只由星流维护者用正式签名打出。
 
 // 版本:「X.Y.Z」→ X*10000+Y*100+Z(Y、Z 都在 0 到 99 之间);每次在插件商店上架,版本号必须变大。
-val pluginVersionName = "1.0.1"
-val pluginVersionCode = 10001
+val pluginVersionName = "1.0.2"
+val pluginVersionCode = 10002
 val pluginVersionMatch = Regex("""^(\d+)\.(\d{1,2})\.(\d{1,2})$""").matchEntire(pluginVersionName)
     ?: throw GradleException("pluginVersionName must be X.Y.Z: $pluginVersionName")
 val (pluginMajor, pluginMinor, pluginPatch) = pluginVersionMatch.destructured

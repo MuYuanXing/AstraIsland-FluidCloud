@@ -154,7 +154,7 @@ object OfficialCloudServices {
      */
     fun iconButtonLabel(action: CloudAction?, data: Map<String, String>): String? = when (action?.method) {
         "gaodeBwnaviOverview" -> if (data["showOverViewClose"]?.trim() == "true") "退出全览" else "全览"
-        // 系统录屏卡片的两个开关只画图标,朗读文字由录屏服务在录制时才给;星河岛上写它们是什么
+        // 系统录屏卡片的两个开关只画图标,朗读文字(「录制系统声音按钮 已选中」)只给读屏;星河岛上写它们是什么
         "audioSysClick" -> "系统声音"
         "audioMicClick" -> "麦克风"
         else -> null

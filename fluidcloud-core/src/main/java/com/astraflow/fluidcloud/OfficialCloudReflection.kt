@@ -201,11 +201,16 @@ object OfficialCloudReflection {
         val entry = entranceCode(entrance)
         // 卡片引擎可能比内容晚建好:稍后补读时再从系统卡片身上取一次
         val seedling = model.seedling ?: call(model.card, "getInnerCard")
-        // 卡片数据:记录上那份读不到时,用卡片引擎自己持有的那一份;系统界面自己做的提示(手电筒、勿扰、响铃模式)
-        // 两处都没有,用系统界面生成提示时的那一份
-        val raw = (call(ui, "getData") as? ByteArray)?.takeIf { it.isNotEmpty() }
+        // 卡片数据:记录上那份读不到时,用卡片引擎自己持有的那一份;提供方还没送数据时,和卡片引擎一样用发起时带来的初始数据;
+        // 系统界面自己做的提示(手电筒、勿扰、响铃模式)这几处都没有,用系统界面生成提示时的那一份
+        val sent = (call(ui, "getData") as? ByteArray)?.takeIf { it.isNotEmpty() }
             ?: (call(call(seedling, "getUIData"), "getData") as? ByteArray)?.takeIf { it.isNotEmpty() }
-            ?: OfficialCloudSystemTips.data(serviceId)
+        val initial = if (sent == null) initData(service) else null
+        val raw = sent ?: initial ?: OfficialCloudSystemTips.data(serviceId)
+        // 初始数据是服务发起那一刻写下的(服务时间戳是墙上时钟):按那一刻算收到的时间,稍后重读时倒计时不从头算
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        val wallNow = System.currentTimeMillis()
+        val receivedAt = initial?.let { time.takeIf { it in 1..wallNow }?.let { nowElapsed - (wallNow - it) } } ?: nowElapsed
         val (instant, remindLevel) = instantFacts(service, ui, options)
         val shake = shouldShake(ui, options)
         return CloudSnapshot(nativeKey, user, pkg, serviceId, instance, time, revision, entrance,
@@ -223,7 +228,7 @@ object OfficialCloudReflection {
             templateVersion = (call(service, "getVersionCode") as? Number)?.toLong() ?: text(call(seedling, "getUpkVersion")).toLongOrNull() ?: 0L,
             // 页面按卡片数据写明的 options.pageId(卡片引擎也按它选页);不去问卡片引擎,免得在它排版前提前触发它的内部初始化
             pageId = page(raw),
-            receivedAtElapsedMs = android.os.SystemClock.elapsedRealtime(),
+            receivedAtElapsedMs = receivedAt,
             rendered = root != null,
             instant = instant, remindLevel = remindLevel, shake = shake)
     }
@@ -261,6 +266,24 @@ object OfficialCloudReflection {
         }?.let(CloudTemplate::flatten) ?: CloudTemplate.flatten(json).filterKeys { it !in ENVELOPE_KEYS }
         return fields.entries.take(256).associate { (k, v) -> k.take(100) to v.take(MAX_TEXT) }
     }
+
+    /**
+     * 提供方还没送数据时,卡片引擎先用发起时带来的初始数据画卡片,读法与卡片引擎一致:服务附加项里写了 uidata_from_business 的原样用;
+     * 否则取 systemInitData 里的 initData,照引擎的写法包成 {options:{pageId}, ui_data}。都没有时为空。
+     * (例如闹钟稍后提醒:时钟应用发起时把剩余时间写在初始数据里,不读它就只剩说明文件里的占位内容「00:00」「上午」。)
+     */
+    fun initData(service: Any?): ByteArray? {
+        val extras = call(service, "getExtras") as? Map<*, *> ?: return null
+        extras[BUSINESS_UI_DATA_KEY]?.toString()?.takeIf { it.isNotBlank() }?.let { return it.toByteArray(Charsets.UTF_8) }
+        val init = (extras[INIT_DATA_KEY] as? String)?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+            ?.optString("initData")?.takeIf { it.isNotBlank() && it != "null" } ?: return null
+        val page = extras["pageId"]?.toString()
+        val envelope = if (page == null) "{\"ui_data\":$init}" else "{\"options\":{\"pageId\":${org.json.JSONObject.quote(page)}},\"ui_data\":$init}"
+        return envelope.toByteArray(Charsets.UTF_8)
+    }
+
+    private const val INIT_DATA_KEY = "systemInitData"
+    private const val BUSINESS_UI_DATA_KEY = "uidata_from_business"
 
     /** 卡片数据里写明的模板页(options.pageId,系统卡片引擎按它选页面);没有时为空。 */
     fun page(raw: ByteArray?): String = envelope(raw)?.optJSONObject("options")?.optString("pageId").orEmpty().take(64)

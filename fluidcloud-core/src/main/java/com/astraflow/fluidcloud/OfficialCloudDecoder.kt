@@ -293,8 +293,10 @@ object OfficialCloudDecoder {
                     // 按模板登记的动作执行;读不到动作或参数时不显示,也不把按钮上的字当正文
                     val templateNode = template?.button(node.level, snapshot.data)
                     val action = templateNode?.let { template.action(it.events["click"], snapshot.data) }
-                    val label = text.ifBlank { templateNode?.let { template.label(it, snapshot.data) }.orEmpty() }
-                        .ifBlank { OfficialCloudServices.iconButtonLabel(action, snapshot.data).orEmpty() }
+                    // 只画图标、星河岛知道是什么的按钮(录屏的系统声音、麦克风)写短名字;给读屏的说明(「录制系统声音按钮 已选中」)
+                    // 不当按钮上的字
+                    val label = text.ifBlank { OfficialCloudServices.iconButtonLabel(action, snapshot.data)
+                        ?: templateNode?.let { template.label(it, snapshot.data) }.orEmpty() }
                     // 官方只画图标的圆形按钮(type 是 circle)记下它的图标,卡片上画成圆钮;文字按钮带的小图标和底色也记下
                     // (现行规则「展开卡片总表」)
                     val round = props["type"] == CIRCLE_BUTTON
