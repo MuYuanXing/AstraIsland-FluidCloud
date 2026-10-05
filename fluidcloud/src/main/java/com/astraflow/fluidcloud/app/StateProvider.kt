@@ -1,0 +1,57 @@
+package com.astraflow.fluidcloud.app
+
+import android.content.ContentProvider
+import android.content.ContentValues
+import android.content.pm.PackageManager
+import android.database.Cursor
+import android.net.Uri
+import android.os.Bundle
+import com.astraflow.fluidcloud.BuildConfig
+import com.astraflow.fluidcloud.FluidCloudSettings
+import com.astraisland.events.AdapterApp
+
+/**
+ * 星流向插件取状态、交原来的设置、请它重新开启(约定见 [AdapterApp]);只回答和插件同一把签名的星流。
+ * 取状态时插件进程可能刚被这一问叫起来,模块框架稍后才交来服务:最多等 [ENABLED_WAIT_MS],
+ * 插件没在 LSPosed 里启用时就等满这么久。
+ */
+class StateProvider : ContentProvider() {
+    override fun onCreate() = true
+
+    override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
+        if (!fromHost()) return null
+        return when (method) {
+            AdapterApp.METHOD_STATE -> Bundle().apply {
+                putLong(AdapterApp.KEY_VERSION_CODE, BuildConfig.VERSION_CODE.toLong())
+                putBoolean(AdapterApp.KEY_ENABLED, PluginSettings.awaitEnabled(ENABLED_WAIT_MS))
+            }
+            AdapterApp.METHOD_RESUME -> Bundle().apply {
+                val done = PluginSettings.awaitEnabled(ENABLED_WAIT_MS) && PluginSettings.requestResume()
+                putString(AdapterApp.KEY_RESULT, if (done) AdapterApp.RESULT_APPLIED else AdapterApp.RESULT_UNAVAILABLE)
+            }
+            AdapterApp.METHOD_IMPORT -> {
+                val values = FluidCloudSettings.of(extras) ?: return null
+                Bundle().apply { putString(AdapterApp.KEY_RESULT, PluginSettings.import(values)) }
+            }
+            else -> null
+        }
+    }
+
+    private fun fromHost(): Boolean {
+        val context = context ?: return false
+        val caller = runCatching { callingPackage }.getOrNull() ?: return false
+        return caller == HOST_PACKAGE &&
+            context.packageManager.checkSignatures(caller, context.packageName) == PackageManager.SIGNATURE_MATCH
+    }
+
+    override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
+    override fun getType(uri: Uri): String? = null
+    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
+
+    private companion object {
+        const val HOST_PACKAGE = "com.astraflow.tool"
+        const val ENABLED_WAIT_MS = 2_000L
+    }
+}

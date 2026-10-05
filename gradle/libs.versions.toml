@@ -1,0 +1,46 @@
+[versions]
+# ── 构建工具 ──
+agp = "9.4.1"
+kotlin = "2.4.20"
+
+# ── AndroidX ──
+core-ktx = "1.17.0"
+activity-compose = "1.13.0"
+lifecycle = "2.10.0"
+
+# ── Compose ──
+compose-bom = "2026.09.00"
+
+# ── libxposed API 101 ──
+libxposed-api = "101.0.0"
+libxposed-service = "101.0.0"
+
+# ── 代码搜索 ──
+dexkit = "2.0.7"
+
+# ── 界面部件 ──
+compose-hig = "1.4.1"
+kyant-backdrop = "2.0.1"
+
+# ── 测试 ──
+junit4 = "4.13.2"
+
+[libraries]
+core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
+lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "libxposed-api" }
+libxposed-service = { group = "io.github.libxposed", name = "service", version.ref = "libxposed-service" }
+dexkit = { group = "org.luckypray", name = "dexkit", version.ref = "dexkit" }
+compose-hig = { group = "zone.ien.hig", name = "hig", version.ref = "compose-hig" }
+compose-hig-icons = { group = "zone.ien.hig", name = "hig-icons-extended", version.ref = "compose-hig" }
+kyant-backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "kyant-backdrop" }
+junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

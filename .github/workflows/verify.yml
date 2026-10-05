@@ -1,0 +1,45 @@
+name: Verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 单元测试用 25，编译用 17（最后一个为默认）
+          java-version: |
+            25
+            17
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install Android platform 37
+        run: |
+          set -eu
+          sdkmanager "platforms;android-37.0"
+          # 编译平台按整数版本 37 登记，与各模块的 compileSdk = 37 对应
+          SRC="$ANDROID_HOME/platforms/android-37.0"
+          DEST="$ANDROID_HOME/platforms/android-37"
+          rm -rf "$DEST"
+          cp -r "$SRC" "$DEST"
+          sed -i 's/^AndroidVersion.ApiLevel=.*/AndroidVersion.ApiLevel=37/; s/^Pkg.Desc=.*/Pkg.Desc=Android SDK Platform 37/' "$DEST/source.properties"
+          sed -i 's#path="platforms;android-37.0"#path="platforms;android-37"#; s#<api-level>37.0</api-level>#<api-level>37</api-level>#; s#Android SDK Platform 37.0#Android SDK Platform 37#' "$DEST/package.xml"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check the event list and mappings
+        run: node tools/contracts/validate-island-system-events.mjs
+      - name: Unit tests
+        run: ./gradlew :fluidcloud:testDebugUnitTest --no-daemon
+      - name: Build debug package
+        run: ./gradlew :fluidcloud:assembleDebug --no-daemon

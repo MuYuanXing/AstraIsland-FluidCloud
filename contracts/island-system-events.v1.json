@@ -1,0 +1,260 @@
+{
+  "manifestFormat": 2,
+  "description": "星河岛系统事件标准清单:各家手机系统的实时提示接进星河岛时,接入件把系统的值翻译成这里的说法,摆放只由星河岛按这份清单决定。每家系统一份对照表(island-system-events.<厂商>.v1.json),写明它的值对应这里的哪一项。规范见 docs/design/system-event-intake.md;校验:node tools/contracts/validate-island-system-events.mjs(逐项核对编码里的键名与本清单一致)。",
+  "codec": {
+    "version": 1,
+    "description": "接入件与星河岛在同一个进程里交换,两边的类互不相认,只交换系统自带类型做成的包裹(Bundle、列表、位图、系统图标、字节);键名就是本清单里的编号。包裹不跨进程传,位图与图标按对象放进去;同一张图在一批里只编一次。版本不一样时不交换。代码在 island-events 模块(SystemEvent、SystemEventCodec),星流与接入件各带一份。"
+  },
+  "event": {
+    "description": "每件事都带的内容",
+    "fields": [
+      { "id": "identity", "type": "text", "meaning": "系统给这件事的编号,同一件事前后不变;来源应用变了(代发的系统服务换成真正的应用)也不变" },
+      { "id": "userId", "type": "integer", "meaning": "这件事属于手机上的哪个用户" },
+      { "id": "revision", "type": "integer", "meaning": "这一版的先后顺序,后来的大;胶囊晃一下按它认新的一版" },
+      { "id": "kind", "type": "kind", "meaning": "事件种类,取 kinds 里的一项;认不出时是 unlisted" },
+      { "id": "packageName", "type": "package", "meaning": "发这张卡片的应用(可能是代发的系统服务);认同一件事的通知时用" },
+      { "id": "sourcePackage", "type": "package", "meaning": "真正的来源应用(例如美团),不是代它发提示的系统服务" },
+      { "id": "serviceName", "type": "text", "meaning": "系统服务的名字(例如「手电筒」);系统界面托管的服务不写「系统界面」;读不到时为空,由星河岛写发卡片的应用名" },
+      { "id": "lockScreen", "type": "boolean", "meaning": "系统允许在锁屏显示" },
+      { "id": "alert", "type": "enum", "values": ["none", "short", "long", "always"], "meaning": "这一版要不要自动展开卡片:不要、短时 3 秒、长时 5 秒、一直展开;只亮一下的提示不算" },
+      { "id": "instant", "type": "enum", "values": ["no", "short", "normal"], "meaning": "只亮一下就消失的提示:不是、短时 3 秒、其余 5 秒(勿扰、响铃模式这类)" },
+      { "id": "shake", "type": "boolean", "meaning": "这一版要求胶囊晃一下" },
+      { "id": "noPicture", "type": "boolean", "meaning": "系统自己的卡片本来就不在左边放图(例如地铁、红绿灯提醒),不拿别的图顶替" },
+      { "id": "openable", "type": "boolean", "meaning": "点卡片能交回系统执行(系统登记了点击动作或打开目标)" },
+      { "id": "relatedNotifications", "type": "notificationIds", "meaning": "系统把哪几条通知做成了这张卡片,用来认出同一件事" },
+      { "id": "notificationMark", "type": "extraAndValue", "meaning": "通知附加信息里写着这个名字和值的通知也是同一件事;没有时不填" },
+      { "id": "complete", "type": "boolean", "meaning": "卡片内容读全了;读不全、同一件事的通知卡已在星河岛上时留通知卡" },
+      { "id": "fingerprint", "type": "integer", "meaning": "这一版内容的指纹:内容变了指纹就变;只亮一下的提示按它认新的一次" },
+      { "id": "details", "type": "enum", "values": ["movie", "scenic", "course"], "meaning": "要拆成并排几格的明细:电影(场次、影厅、座位)、景点门票(地址、可用时间)、课程(时间、节次、教室);不拆时不填" },
+      { "id": "card", "type": "card", "meaning": "卡片内容,见 card 一节" }
+    ]
+  },
+  "kinds": [
+    { "id": "call", "name": "来电与通话", "drawnAs": "通话卡片;免提开没开由星河岛自己问系统", "fields": [
+      { "id": "callState", "type": "enum", "values": ["incoming", "dialing", "ongoing"], "meaning": "来电、正在呼叫、通话中;读不出正在呼叫时只给来电或通话中" }
+    ] },
+    { "id": "satelliteCall", "name": "卫星通话", "drawnAs": "通用卡片,照通话的样子(电话符号、通话的绿色)" },
+    { "id": "timer", "name": "计时器", "drawnAs": "计时卡片", "fields": [
+      { "id": "timerName", "type": "text", "meaning": "计时器的名字" },
+      { "id": "timerStatus", "type": "text", "meaning": "计时器的状态说明" },
+      { "id": "remainingMs", "type": "duration", "meaning": "剩余时间" },
+      { "id": "running", "type": "boolean", "meaning": "在走还是暂停" },
+      { "id": "ringing", "type": "boolean", "meaning": "时间到了正在响铃" }
+    ] },
+    { "id": "stopwatch", "name": "秒表", "drawnAs": "计时卡片", "fields": [
+      { "id": "elapsedMs", "type": "duration", "meaning": "已走的时间" },
+      { "id": "running", "type": "boolean", "meaning": "在走还是暂停" },
+      { "id": "stopwatchNote", "type": "text", "meaning": "秒表的说明" }
+    ] },
+    { "id": "alarm", "name": "闹钟", "drawnAs": "计时卡片", "fields": [
+      { "id": "alarmLabel", "type": "text", "meaning": "闹钟的名字" },
+      { "id": "alarmTime", "type": "text", "meaning": "响铃时写的时刻;没响时是到点前的剩余时间" },
+      { "id": "ringing", "type": "boolean", "meaning": "正在响铃" },
+      { "id": "halfDay", "type": "text", "meaning": "12 小时制时的「上午」「下午」" }
+    ] },
+    { "id": "flashAlarm", "name": "秒抢闹钟", "drawnAs": "计时卡片" },
+    { "id": "gameTimer", "name": "游戏计时", "drawnAs": "计时卡片", "fields": [
+      { "id": "gamePackage", "type": "package", "meaning": "是哪个游戏" }
+    ] },
+    { "id": "gameCountdown", "name": "游戏复活倒计时", "drawnAs": "计时卡片,没有时间时用通用卡片", "fields": [
+      { "id": "gamePackage", "type": "package", "meaning": "是哪个游戏" }
+    ] },
+    { "id": "screenRecording", "name": "录屏", "drawnAs": "录制中交给星河岛自己的录制卡片,只补状态那句和系统声音、麦克风两个开关", "fields": [
+      { "id": "recordStateText", "type": "text", "meaning": "录制状态那句(例如「录制中」)" }
+    ] },
+    { "id": "soundRecording", "name": "录音", "drawnAs": "录制中交给星河岛自己的录制卡片" },
+    { "id": "recordingSaved", "name": "录屏、录音已保存", "drawnAs": "通用卡片,带「分享」这类按钮;保存进度与计时不上岛" },
+    { "id": "microphoneService", "name": "用麦克风的系统服务(语音摘记、识别背景音乐)", "drawnAs": "状态卡片,右边橙色亮点;写着已录时长时用强调排法" },
+    { "id": "systemSwitch", "name": "系统开关提示", "drawnAs": "状态卡片", "fields": [
+      { "id": "switch", "type": "enum", "values": ["flashlight", "doNotDisturb", "threeKey", "eyeProtect", "hotspot", "gesture"], "meaning": "哪个开关:手电筒、勿扰、三段式按键(含响铃模式)、护眼、个人热点、手势提示" },
+      { "id": "switchName", "type": "text", "meaning": "开关的名字" },
+      { "id": "switchState", "type": "text", "meaning": "状态那句(例如「已开启」);系统没单独给时不填" }
+    ] },
+    { "id": "taskProgress", "name": "任务进度(应用下载、游戏更新、互传发送)", "drawnAs": "进度卡片;只在文字里写了百分比时也画进度条" },
+    { "id": "orderProgress", "name": "订单进度(外卖、快递提醒、车辆充电)", "drawnAs": "进度卡片,品牌色;没有进度时用通用卡片" },
+    { "id": "parcelPickup", "name": "快递取件", "drawnAs": "通用卡片的强调排法,胶囊右边的字用品牌色" },
+    { "id": "ride", "name": "打车", "drawnAs": "进度卡片,品牌色" },
+    { "id": "navigation", "name": "导航(开车、骑行、步行)", "drawnAs": "通用卡片,距离放大;有到终点的进度时底部按进度卡片画" },
+    { "id": "trafficLight", "name": "驾车红绿灯提醒", "drawnAs": "通用卡片,标题右边并排画灯和秒数;排位和导航一样;胶囊两边的秒数按灯的颜色,不用品牌色" },
+    { "id": "reminder", "name": "提醒(支付保护、取单码、课程、地铁、降雨、气象预警等)", "drawnAs": "通用卡片;底部有进度条的用进度卡片" },
+    { "id": "appNotice", "name": "应用通知被系统做成的卡片", "drawnAs": "照应用自己的实时活动:有进度用进度卡片,其余通用卡片" },
+    { "id": "unlisted", "name": "认不出种类", "drawnAs": "按通用结构排:底部是进度条的用进度卡片,其余通用卡片;接入件在运行记录里写下服务编号" },
+    { "id": "music", "name": "音乐", "ownedByIsland": true, "drawnAs": "不上岛;星河岛放同一个应用的音乐时藏起系统的音乐胶囊", "fields": [
+      { "id": "mediaPackage", "type": "package", "meaning": "真正在放歌的应用" }
+    ] },
+    { "id": "charging", "name": "系统的充电胶囊", "alwaysHidden": true, "drawnAs": "一律藏起;字和电池图标补给星河岛自己的充电卡片" },
+    { "id": "batteryTip", "name": "系统的电池提示", "alwaysHidden": true, "drawnAs": "一律藏起,不做低电量提醒" },
+    { "id": "device", "name": "耳机等设备", "ownedByIsland": true, "drawnAs": "不单独上岛;设备图和左耳、右耳、充电盒电量补进星河岛自己的耳机卡片" }
+  ],
+  "card": {
+    "description": "卡片内容的通用结构:接入件按系统卡片自己标的主次填,「按顺序」的都照系统卡片里的先后。认不出种类的事件只用这一部分。",
+    "fields": [
+      { "id": "title", "type": "text", "meaning": "卡片的标题:系统给的标题,没给时是卡片里第一段字" },
+      { "id": "body", "type": "text", "meaning": "卡片里其余的字,一行一段" },
+      { "id": "capsuleText", "type": "text", "meaning": "胶囊上的字,连成一句" },
+      { "id": "capsuleLabel", "type": "text", "meaning": "胶囊左边的字;没有时不填" },
+      { "id": "capsuleWritesText", "type": "boolean", "meaning": "系统胶囊右边自己写着字(此刻为空也算):胶囊右边一律显示字" },
+      { "id": "capsuleImage", "type": "image", "meaning": "胶囊上的第一张图(不在右边的);没有时是服务标志或系统登记的服务图标" },
+      { "id": "capsuleRightImage", "type": "image", "meaning": "系统胶囊右边自己的图" },
+      { "id": "capsuleRightProgress", "type": "progress", "meaning": "系统胶囊右边自己的进度" },
+      { "id": "capsule", "type": "capsule", "meaning": "系统胶囊左边、右边各放了什么,见 capsule" },
+      { "id": "picture", "type": "image", "meaning": "卡片左边的身份图" },
+      { "id": "progress", "type": "progress", "meaning": "底部进度条" },
+      { "id": "timer", "type": "timer", "meaning": "计时" },
+      { "id": "buttons", "type": "buttons", "meaning": "按钮,按顺序,见 buttons 一节" },
+      { "id": "texts", "type": "texts", "meaning": "展开卡片里带角色的字,按顺序,见 text" },
+      { "id": "firstTexts", "type": "roleToText", "meaning": "每个文字角色的第一段字(胶囊上的也算)" },
+      { "id": "images", "type": "roleToImage", "meaning": "每个图的角色的第一张图(胶囊上的也算)" },
+      { "id": "percentInText", "type": "fraction", "meaning": "文字里写的百分比(只有任务进度用它画进度条)" },
+      { "id": "layout", "type": "enum", "values": ["plain", "code", "pickupCode", "mirror", "guide"], "meaning": "系统给卡片中间那一块标的排法;没写或认不出时不填" },
+      { "id": "ring", "type": "ring", "meaning": "卡片右边的小进度环:进度、颜色、环中间的图" },
+      { "id": "tags", "type": "tags", "meaning": "小标签(小图和字),按顺序:跟着说明那一行的,或单独一行的(ownLine)" },
+      { "id": "titleMark", "type": "image", "meaning": "标题后面的小图(完成的对勾、失败)" },
+      { "id": "spinner", "type": "image", "meaning": "一直转圈的小图标" },
+      { "id": "spinnerInner", "type": "image", "meaning": "转圈的小图标正中间不转的小图" },
+      { "id": "headerImage", "type": "image", "meaning": "卡片顶部那一行的第一张图" },
+      { "id": "largeImage", "type": "image", "meaning": "放在卡片底部的大图或动画" },
+      { "id": "backgroundColor", "type": "color", "meaning": "系统铺在卡片上的颜色(渐变取最浓的);星河岛不铺,只给卡片上沿的光边取色" },
+      { "id": "backgroundImage", "type": "image", "meaning": "系统铺在卡片上的底图;用法同上" },
+      { "id": "lampColor", "type": "enum", "values": ["red", "yellow", "green"], "meaning": "导航到路口时那盏红绿灯的颜色;认不出时不填" }
+    ],
+    "textRoles": [
+      { "id": "header", "meaning": "卡片顶部那一行的字(服务名这类)" },
+      { "id": "core", "meaning": "最显眼的那句(核心信息)" },
+      { "id": "coreLabel", "meaning": "核心那句上面的一行小字(取码卡片里写码是什么)" },
+      { "id": "secondary", "meaning": "核心那句下面的第一行小字" },
+      { "id": "tertiary", "meaning": "再下面一行小字" },
+      { "id": "label", "meaning": "标签那一句" },
+      { "id": "hint", "meaning": "底部的提示" },
+      { "id": "extraA", "meaning": "底部的第一段补充" },
+      { "id": "extraB", "meaning": "底部的第二段补充(电影的影院名、景点和课程的第二项)" },
+      { "id": "colored", "meaning": "系统单独上色的一句" },
+      { "id": "figure", "meaning": "放大写的数(已录时长、比赛信息)" },
+      { "id": "large", "meaning": "其它放大写的字" },
+      { "id": "other", "meaning": "其它带位置的字;一般卡片不写,对称卡片按下面的对称角色读" }
+    ],
+    "mirrorRoles": [
+      { "id": "leftName", "meaning": "左边一方的名字" },
+      { "id": "rightName", "meaning": "右边一方的名字" },
+      { "id": "leftScore", "meaning": "左边的比分" },
+      { "id": "rightScore", "meaning": "右边的比分" },
+      { "id": "matchInfo", "meaning": "比赛信息(开赛前放大写在中间)" },
+      { "id": "matchStatus", "meaning": "比赛状态" },
+      { "id": "competition", "meaning": "赛事" },
+      { "id": "stage", "meaning": "比赛阶段" },
+      { "id": "leftNote", "meaning": "左边名字下面的小字" },
+      { "id": "rightNote", "meaning": "右边名字下面的小字" }
+    ],
+    "trafficRoles": [
+      { "id": "lightSeconds", "meaning": "导航到路口时红绿灯的秒数" },
+      { "id": "leftLampSeconds", "meaning": "红绿灯提醒左边那盏灯的秒数" },
+      { "id": "rightLampSeconds", "meaning": "红绿灯提醒右边那盏灯的秒数" }
+    ],
+    "enlargedRoles": ["core", "figure", "large", "leftScore", "rightScore", "matchInfo", "leftLampSeconds", "rightLampSeconds"],
+    "text": {
+      "description": "每一段字带的东西",
+      "fields": [
+        { "id": "role", "meaning": "上面三组角色里的一个" },
+        { "id": "block", "type": "enum", "values": ["top", "center", "bottom"], "meaning": "在卡片顶部那一行、中间还是底部" },
+        { "id": "text", "meaning": "原样的字,不改写、不拼接" },
+        { "id": "big", "type": "boolean", "meaning": "系统把它写成大字(比标题大一截)" },
+        { "id": "parts", "meaning": "分几段写的一句里看得见的各段,每段带自己的颜色" },
+        { "id": "color", "meaning": "整句的颜色(系统写的原色,见 textTones)" },
+        { "id": "gradient", "meaning": "整句写成渐变时的各个颜色和位置(0 到 1)" }
+      ]
+    },
+    "imageRoles": [
+      { "id": "main", "meaning": "主图:头像、菜品图、转向箭头这类内容自己的图" },
+      { "id": "titleMark", "meaning": "标题旁的状态小图(完成的对勾、失败);车辆充电的车也写在这里" },
+      { "id": "descriptionIcon", "meaning": "说明旁的小图" },
+      { "id": "rightLogo", "meaning": "对称卡片右边一方的标志" },
+      { "id": "centerIcon", "meaning": "对称卡片两个比分中间的图" },
+      { "id": "topRowFirst", "meaning": "卡片顶部那一行的第一张图" },
+      { "id": "topRowSecond", "meaning": "卡片顶部那一行的第二张图(卡片别处没有图时放左边)" },
+      { "id": "progressMarker", "meaning": "进度条上跟着走的小图(骑手、小车、自行车)" },
+      { "id": "cornerLogo", "meaning": "卡片右上角的标志,不当左边的图" },
+      { "id": "codeImage", "meaning": "取码卡片里码旁边的图" },
+      { "id": "codeOverlay", "meaning": "叠在码旁那张图上的小标志" },
+      { "id": "bottomPicture", "meaning": "卡片底部的大图(引导页的大图;取码卡片没有码旁的图时也放在这里)" },
+      { "id": "lanes", "meaning": "导航的车道图" },
+      { "id": "navigationLamp", "meaning": "导航到路口时的红绿灯图" },
+      { "id": "rightLamp", "meaning": "红绿灯提醒右边那盏灯" },
+      { "id": "leftLamp", "meaning": "红绿灯提醒左边那盏灯" }
+    ],
+    "image": {
+      "description": "每张图已经由接入件读好、认好身份;同一张图在一件事里是同一个对象",
+      "types": [
+        { "id": "picture", "meaning": "位图;identity 是像素或文件内容的指纹,同一张图同一个" },
+        { "id": "platform", "meaning": "系统图标对象(通知里的图标)" },
+        { "id": "animation", "meaning": "会动的图标(动画文件);playing 为假时停在第一帧" },
+        { "id": "moving", "meaning": "会动的图片(动图 WebP)" },
+        { "id": "missing", "meaning": "那里放了图,但此刻没有可画的:共享位置里的照片还在后台读(读好后再送一版),或者读不出" }
+      ],
+      "fields": [
+        { "id": "symbol", "type": "boolean", "meaning": "按系统符号画(单色图标),不是照片" },
+        { "id": "appShared", "type": "boolean", "meaning": "放在来源应用自己共享位置的照片(例如菜品图)" },
+        { "id": "substitute", "type": "boolean", "meaning": "数据没给图时系统卡片自带的替代图" }
+      ]
+    },
+    "capsule": {
+      "description": "系统胶囊左边(leading)、右边(trailing)各放了什么,按顺序;absent:系统排出了卡片,但这一页没写胶囊",
+      "items": [
+        { "id": "text", "meaning": "一段字(此刻为空的也记下,表示那里是写字的位置)、它的颜色;timer 为真时这段字是计时" },
+        { "id": "picture", "meaning": "一张图(读不到时为空,表示那里放了图);spin 为真时一直转" },
+        { "id": "ring", "meaning": "进度环:进度、颜色、环中间的图" }
+      ]
+    },
+    "progress": { "description": "进度:fraction 整条的进度(0 到 1,读不出时不填)、labels 阶段名(比段数多一个)、steps 分几段、tint 进度条的颜色(系统写的原色,没写或写成白色时不填)" },
+    "timer": { "description": "计时:countdown 为真时 baseMs 是结束时刻,否则是起点;elapsedClock 为真时按开机时钟,否则按墙上时钟;running 为假时停住,显示 frozenMs" }
+  },
+  "buttons": {
+    "fields": [
+      { "id": "id", "meaning": "按钮的编号,由接入件定;点下时原样交回" },
+      { "id": "label", "meaning": "按钮上的字;只有图标的按钮写它是什么(读屏用)" },
+      { "id": "use", "type": "enum", "values": ["pause", "resume", "stop", "answer", "decline", "hangUp", "speaker", "other"], "meaning": "按钮的用途" },
+      { "id": "icon", "meaning": "按钮的小图" },
+      { "id": "round", "type": "boolean", "meaning": "只有图标的圆钮" },
+      { "id": "fill", "meaning": "系统给的底色(原色)" },
+      { "id": "checked", "type": "boolean", "meaning": "写成开关时开没开;不是开关时不填" },
+      { "id": "topRow", "type": "boolean", "meaning": "在卡片顶部那一行" },
+      { "id": "required", "type": "boolean", "meaning": "系统卡片必有的按钮,排在前面" },
+      { "id": "onRing", "type": "boolean", "meaning": "点小进度环执行它" }
+    ],
+    "fixedActions": {
+      "description": "星河岛按用途画的按钮交回这几个编号,接入件按用途找系统卡片上对应的按钮执行;系统卡片没有接听、拒接、挂断按钮时也交回这几个编号,由接入件按系统原来的办法执行。其余按钮交回按钮自己的 id。",
+      "values": ["pause", "resume", "stop", "toggle", "answer", "decline", "hangup"]
+    }
+  },
+  "textTones": {
+    "description": "系统单独上了颜色的字最终只翻译成含义,具体颜色由星河岛统一规定。现在各处照系统写的原色交换(text.color、parts、gradient、按钮的 fill、进度的 tint、胶囊里的颜色);各含义对应的颜色定下、改造前后的样子给负责人看过以后,换成这里的含义。",
+    "values": [
+      { "id": "normal", "meaning": "没有单独上色" },
+      { "id": "brighter", "meaning": "比这一处原来的字写得亮" },
+      { "id": "dimmer", "meaning": "比这一处原来的字写得淡" },
+      { "id": "accent", "meaning": "强调(时刻、几分钟、车牌这类关键字)" },
+      { "id": "info", "meaning": "提示信息(蓝)" },
+      { "id": "success", "meaning": "完成、正常(绿)" },
+      { "id": "warning", "meaning": "提醒注意(橙、黄)" },
+      { "id": "danger", "meaning": "警示、危险(红)" },
+      { "id": "gradient", "meaning": "写成渐变的整句" }
+    ]
+  },
+  "adapterRules": {
+    "must": [
+      "把本家系统的值翻译成这份清单的说法,文字原样给",
+      "星河岛接手一件事时藏起本家系统自己的同一个胶囊;星河岛不接手时还给系统;藏不住时不藏,在接入件自己的页面写明",
+      "用户点按钮或卡片时按系统登记的动作交回系统执行",
+      "录下真机样本,写对照表,样本过自动核对"
+    ],
+    "mustNot": [
+      "决定位置、字号、颜色、排位和卡片排法,使用星河岛画图的部分",
+      "写标题、说明、正文:这些由星河岛按事件种类和内容项写",
+      "改写或拼接系统给的文字(换算单位、阶段编号换成进度可以)",
+      "猜:清单里没有的值不填,在运行记录里写一行,同一个服务同一种情况只写一行",
+      "自己往清单里加事件种类或内容项"
+    ]
+  },
+  "vendors": [
+    { "id": "oppo", "name": "OPPO 系(ColorOS 流体云)", "mapping": "island-system-events.oppo.v1.json" }
+  ]
+}

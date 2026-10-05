@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 由 tools/icons/glyphs.mjs 生成(「实时活动」的图案),改图标改那里再运行它,不在这里手改。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="1.875"
+        android:scaleY="1.875"
+        android:translateX="31.5"
+        android:translateY="31.5">
+        <path
+            android:pathData="M7 6.8H17A5.2 5.2 0 0 1 22.2 12V12A5.2 5.2 0 0 1 17 17.2H7A5.2 5.2 0 0 1 1.8 12V12A5.2 5.2 0 0 1 7 6.8ZM7 8.9H17A3.1 3.1 0 0 1 20.1 12V12A3.1 3.1 0 0 1 17 15.1H7A3.1 3.1 0 0 1 3.9 12V12A3.1 3.1 0 0 1 7 8.9Z"
+            android:fillColor="#FFFFFF"
+            android:fillType="evenOdd" />
+        <path
+            android:pathData="M7 10.3H12.8A1.7 1.7 0 0 1 14.5 12V12A1.7 1.7 0 0 1 12.8 13.7H7A1.7 1.7 0 0 1 5.3 12V12A1.7 1.7 0 0 1 7 10.3Z"
+            android:fillColor="#FFFFFF" />
+    </group>
+</vector>
