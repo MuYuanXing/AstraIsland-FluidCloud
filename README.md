@@ -4,7 +4,7 @@
 
 本插件是适用于 OPPO、一加、真我手机的 LSPosed 模块：读取系统流体云中进行中的内容（来电与通话、计时与闹钟、实时活动、系统状态），按星河岛系统事件标准清单翻译后交由星流的星河岛显示，并隐藏系统流体云中相同内容的胶囊；用户点按星河岛上的按钮或卡片时，交由系统执行对应的操作。
 
-> **English summary.** Source code of the official AstraFlow plugin for OPPO, OnePlus and realme phones. It is an LSPosed module that reads ColorOS Fluid Cloud events and hands them to AstraIsland. The source is published under the [PolyForm Strict License 1.0.0](LICENSE.md) with an [additional permission](ADDITIONAL-PERMISSION.md) for preparing contributions. Redistribution of the source code or of any build is not permitted. Contributions are welcome through pull requests; see [CONTRIBUTING.md](CONTRIBUTING.md).
+> **English summary.** Source code of the official AstraFlow plugin for OPPO, OnePlus and realme phones. It is an LSPosed module that reads ColorOS Fluid Cloud events and hands them to AstraIsland. The source is published under the [PolyForm Strict License 1.0.0](LICENSE.md) with an [additional permission](ADDITIONAL-PERMISSION.md) for preparing contributions. Redistribution of the source code or of any build is not permitted. Contributions are welcome through pull requests; see [CONTRIBUTING.md](CONTRIBUTING.md). Self-built packages are accepted by AstraIsland only after the device owner allows a local test in AstraFlow, so changes can be verified on your own device.
 
 ## 安装
 
@@ -14,7 +14,7 @@
 - 星流 v1.60 或以上；
 - 在 LSPosed 中同时启用星流与本插件，作用域为系统界面。
 
-星河岛只接受与星流使用同一正式签名的插件。自行编译的安装包无法连接星河岛。
+星河岛只接受与星流使用同一正式签名的插件。自行编译的安装包仅用于测试修改：在星流中允许本机测试后，星河岛方可接收，做法见 [CONTRIBUTING.md](CONTRIBUTING.md)「在自己的手机上测试」。
 
 ## 仓库内容
 
