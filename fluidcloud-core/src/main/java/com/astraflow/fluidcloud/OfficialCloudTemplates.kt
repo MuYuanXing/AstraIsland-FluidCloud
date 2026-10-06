@@ -101,7 +101,11 @@ class CloudTemplate(
     /** 按钮上的字:有文字用文字,纯图标按钮用无障碍描述(模板里的 voiceLabel)。 */
     fun label(node: Node, data: Map<String, String>): String? {
         val scope = scope(data)
-        return listOfNotNull(node.attrs["value"], node.attrs["voiceLabel"]).firstNotNullOfOrNull { raw ->
+        // 互传大图页的接收按钮误将朗读文字绑定到 reject；按接收请求读取系统提供的 accept 文字。
+        val voiceLabel = if (node.attrs["voiceLabel"] == "{{reject}}" &&
+            action(node.events["click"], data)?.let { it.uri == "com.oplus.oshare.cardwidget" && it.params["event"] == "accept" } == true)
+            "{{accept}}" else node.attrs["voiceLabel"]
+        return listOfNotNull(node.attrs["value"], voiceLabel).firstNotNullOfOrNull { raw ->
             OfficialCloudExpr.text(raw, scope, strings)?.let(::translate)?.trim()?.takeIf { it.isNotEmpty() }
         }
     }
