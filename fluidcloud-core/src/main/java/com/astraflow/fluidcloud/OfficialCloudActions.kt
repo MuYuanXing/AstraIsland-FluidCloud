@@ -53,6 +53,8 @@ class OfficialCloudActions(
         }
     }
 
+    /** 提前取得锁屏查询服务，首次按钮操作不等待服务初始化；锁屏状态仍在每次操作时读取。 */
+    private val keyguard = context.getSystemService(KeyguardManager::class.java)
     private val records = linkedMapOf<String, CloudRecord>()
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "OfficialCloudAction").apply { isDaemon = true } }
 
@@ -91,7 +93,7 @@ class OfficialCloudActions(
         // 来电多半在锁屏,通话接听/挂断/扬声器不拦。其它按钮只在解锁后执行(锁屏时卡片上本来就不画这些按钮)。
         // 不看系统胶囊此刻显不显示:岛显示着这件事、系统胶囊被别的事挤掉或被岛藏起时,按钮照样要能用
         // (原来要求系统胶囊正在显示,音乐在放时系统只显示一颗胶囊,其余事件的按钮一按就提示失败)
-        if (!callControl && context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked != false) return "device locked"
+        if (!callControl && keyguard?.isDeviceLocked != false) return "device locked"
         if (call) return if (performCall(record, buttonId)) null else "call control failed"
         val button = find(record, buttonId) ?: return "button gone"
         button.pending?.let {
