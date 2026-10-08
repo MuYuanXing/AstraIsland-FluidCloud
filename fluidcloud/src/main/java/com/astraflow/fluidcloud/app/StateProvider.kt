@@ -7,12 +7,11 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import com.astraflow.fluidcloud.BuildConfig
-import com.astraflow.fluidcloud.FluidCloudSettings
 import com.astraisland.events.AdapterApp
 import java.security.MessageDigest
 
 /**
- * 星流向插件取状态、交原来的设置、请它重新开启(约定见 [AdapterApp]);只回答官方星流:签名与插件相同,
+ * 星流向插件取状态、请它重新开启(约定见 [AdapterApp]);只回答官方星流:签名与插件相同,
  * 或是星流的正式签名(自行编译的插件也回答官方星流)。
  * 取状态时插件进程可能刚被这一问叫起来,模块框架稍后才交来服务:最多等 [ENABLED_WAIT_MS],
  * 插件没在 LSPosed 里启用时就等满这么久。
@@ -30,10 +29,6 @@ class StateProvider : ContentProvider() {
             AdapterApp.METHOD_RESUME -> Bundle().apply {
                 val done = PluginSettings.awaitEnabled(ENABLED_WAIT_MS) && PluginSettings.requestResume()
                 putString(AdapterApp.KEY_RESULT, if (done) AdapterApp.RESULT_APPLIED else AdapterApp.RESULT_UNAVAILABLE)
-            }
-            AdapterApp.METHOD_IMPORT -> {
-                val values = FluidCloudSettings.of(extras) ?: return null
-                Bundle().apply { putString(AdapterApp.KEY_RESULT, PluginSettings.import(values)) }
             }
             else -> null
         }

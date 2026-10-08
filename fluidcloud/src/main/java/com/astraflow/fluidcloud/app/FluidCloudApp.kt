@@ -6,6 +6,6 @@ import android.app.Application
 class FluidCloudApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        PluginSettings.start(this)
+        PluginSettings.start()
     }
 }

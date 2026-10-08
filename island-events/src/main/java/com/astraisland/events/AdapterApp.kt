@@ -1,7 +1,7 @@
 package com.astraisland.events
 
 /**
- * 星流与接入件应用(例如插件「流体云事件接入」)之间的约定:星流经接入件应用的 [authority] 取它的状态、交原来的设置。
+ * 星流与接入件应用(例如插件「流体云事件接入」)之间的约定:星流经接入件应用的 [authority] 取它的状态、请求重新开启。
  * 接入件应用只回答官方星流:签名与接入件相同,或是星流的正式签名([HOST_CERT_SHA256]),自行编译的接入件也能回答官方星流。
  * 设置项的键与见面时交给星河岛的同名([EventBridge.SETTING_ACCESS] 等)。
  */
@@ -22,14 +22,8 @@ object AdapterApp {
     const val KEY_VERSION_CODE = "versionCode"
     const val KEY_ENABLED = "enabled"
 
-    /**
-     * 交原来的设置(接入开关、四类开关、作为主岛显示四项,键见 [EventBridge]):接入件还没有自己的设置时用上,
-     * 用户在接入件里改过就不再用。回 [KEY_RESULT]:[RESULT_APPLIED] 用上了或不再需要,[RESULT_PENDING] 接入件还没启用,先记下、启用后用上。
-     */
-    const val METHOD_IMPORT = "import"
     const val KEY_RESULT = "result"
     const val RESULT_APPLIED = "applied"
-    const val RESULT_PENDING = "pending"
 
     /**
      * 重新开启:接入件因为多次出错自动暂停后,用户点「重新开启」。接入件记下这一刻,下一次系统界面启动时照常启动。

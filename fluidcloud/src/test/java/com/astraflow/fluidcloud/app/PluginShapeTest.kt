@@ -93,13 +93,14 @@ class PluginShapeTest {
             assertTrue("「显示内容」写明$part 不受影响:$kinds", kinds.contains(part))
         }
         assertTrue("写明两类各包括什么", kinds.contains("外卖、打车、导航") && kinds.contains("充电、音频设备、录制提示与系统开关"))
-        assertTrue("写明系统自带的充电与电池提示始终不显示", kinds.contains("系统自带的充电与电池提示始终不显示"))
-        assertTrue("写明关闭「系统状态」后屏幕顶部不再有充电提示", kinds.contains("关闭「系统状态」后屏幕顶部不再有充电提示"))
+        assertTrue("关闭分类后交还系统", kinds.contains("系统充电与电池提示交还系统"))
+        assertTrue("常驻充电同样受系统状态控制", kinds.contains("关闭「系统状态」后，常驻充电岛停止显示"))
         val asMain = PluginHelp.first { it.heading == "作为主岛显示" }.body
         assertTrue("不知道「显示副岛」开没开,两种情况都写", asMain.contains("「显示副岛」关闭时不显示"))
         assertTrue("写明依赖「系统状态」", asMain.contains("开启「系统状态」后生效"))
         for (scope in listOf("麦克风", "录屏", "手电筒", "勿扰")) assertTrue(asMain.contains(scope))
         val access = PluginHelp.first { it.heading == "系统流体云" }.body
+        assertTrue("接入开关统一控制音乐、通知与系统内容", access.contains("音乐、通知和系统实时内容") && access.contains("撤下这些内容并交还系统"))
         assertTrue("写明隐藏不了时只显示星河岛的做法", access.contains("「不可用」") && access.contains("关闭对应服务"))
         for (section in PluginHelp) {
             assertTrue("使用说明正文以句号结尾:${section.heading}", section.body.endsWith("。"))

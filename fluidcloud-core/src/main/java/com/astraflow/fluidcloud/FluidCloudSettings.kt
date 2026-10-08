@@ -55,12 +55,5 @@ data class FluidCloudSettings(
                 bool(EventBridge.SETTING_MAIN_CHARGING), bool(EventBridge.SETTING_MAIN_HEADSET), bool(EventBridge.SETTING_MAIN_SWITCH))
         }
 
-        fun of(bundle: Bundle?): FluidCloudSettings? {
-            bundle ?: return null
-            fun bool(key: String) = bundle.getBoolean(key, true)
-            return FluidCloudSettings(bool(EventBridge.SETTING_ACCESS), bool(EventBridge.SETTING_CALL), bool(EventBridge.SETTING_TIMER),
-                bool(EventBridge.SETTING_LIVE), bool(EventBridge.SETTING_STATUS), bool(EventBridge.SETTING_MAIN_RECORDING),
-                bool(EventBridge.SETTING_MAIN_CHARGING), bool(EventBridge.SETTING_MAIN_HEADSET), bool(EventBridge.SETTING_MAIN_SWITCH))
-        }
     }
 }

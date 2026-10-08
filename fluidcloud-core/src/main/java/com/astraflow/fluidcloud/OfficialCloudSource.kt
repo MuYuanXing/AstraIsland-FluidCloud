@@ -15,7 +15,7 @@ import com.astraisland.events.SystemEvent
  * (contracts/island-system-events.v1.json);星河岛告诉它接手了哪些事,它让系统自己的同一个胶囊让位(OfficialCloudYield);
  * 星河岛上点按钮时交回系统执行(OfficialCloudActions)。上不上岛、怎么摆由星河岛决定。
  * - 星河岛不在、没收下接入件时什么都不藏,系统流体云照常由系统显示。
- * - 亮完的只亮一下的提示,系统胶囊一直藏着(不看接入开关),直到内容变了或系统把它删掉。
+ * - 已显示完的短提示在接入与该类内容仍开启时继续隐藏；关闭接入或对应分类后交还系统。
  */
 object OfficialCloudSource {
     private const val TAG = "OfficialCloud"
@@ -238,11 +238,11 @@ object OfficialCloudSource {
     }
 
     /**
-     * 这颗系统胶囊要不要让位。亮完的只亮一下的提示不看接入开关,一直藏到内容变了或系统把它删掉(现行规则「系统事件接入」);
-     * 其余只在接入打开、星河岛在管事时让位;星河岛接手的事还要星河岛此刻能露面。
+     * 接入与分类归属均有效时按星河岛的接手结果让位；接入关闭后全部交还系统。
+     * 已完成的提示与充电使用同一归属，其余内容还要求星河岛此刻能露面。
      */
-    fun suppressesNative(nativeKey: String?): Boolean = nativeKey != null && (nativeKey in spentClaims ||
-        ((nativeKey in alwaysClaims || (yieldAllowed && nativeKey in nativeClaims)) && settings.access && islandActive))
+    fun suppressesNative(nativeKey: String?): Boolean = nativeKey != null && settings.access && islandActive &&
+        (nativeKey in spentClaims || nativeKey in alwaysClaims || (yieldAllowed && nativeKey in nativeClaims))
 
     /** 这条系统记录星河岛已经定下让不让位了(见 [decidedKeys])。 */
     fun decided(nativeKey: String): Boolean = nativeKey in decidedKeys
@@ -256,8 +256,8 @@ object OfficialCloudSource {
      */
     fun yieldsByDefault(snapshot: CloudSnapshot): Boolean {
         if (!settings.access || !islandActive) return false
-        if (OfficialCloudServices.alwaysHidden(snapshot)) return true
-        return yieldAllowed && OfficialCloudServices.kind(snapshot).id in shownKinds
+        if (OfficialCloudServices.kind(snapshot).id !in shownKinds) return false
+        return OfficialCloudServices.alwaysHidden(snapshot) || yieldAllowed
     }
 
     /** 星河岛上点了按钮([buttonId])或卡片([buttonId] 为空):按系统登记的动作交回系统执行;送达返回真 */
