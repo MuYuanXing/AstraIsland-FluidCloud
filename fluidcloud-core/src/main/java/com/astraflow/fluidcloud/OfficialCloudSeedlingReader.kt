@@ -21,7 +21,7 @@ object OfficialCloudSeedlingReader {
     const val ENTRANCE = "pantanal.app.bean.Entrance"
     const val CARD = "pantanal.app.Card"
     const val PANTANAL_DATA = "pantanal.app.bean.PantanalUIData"
-    private const val SEEDLING_UI_DATA = "com.oplus.seedling.sdk.seedling.SeedlingUIData"
+    const val SEEDLING_UI_DATA = "com.oplus.seedling.sdk.seedling.SeedlingUIData"
     const val MANAGER = "pantanal.decision.DecisionManager"
     /** 系统流体云插件照这个设置不收某些应用的卡片(ALL:申请了安卓 16 实时通知权限的应用;否则是用分号隔开的包名) */
     private const val DISABLE_SETTING = "livealert_disable_seedling"

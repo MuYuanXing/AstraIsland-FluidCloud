@@ -64,11 +64,11 @@ object OfficialCloudHook {
     )
 
     /**
-     * 装着挂钩的一代插件:送来的类加载器、通知胶囊监听者的类(这一份插件文件里找不到时为空)、装的时候读的插件文件、装上的挂钩
-     * (三个监听、卡片内容与服务名单两处、撤掉名单监听一处),以及这一代送过数据的监听者编号。
+     * 装着挂钩的一代插件:送来的类加载器、这一代挂上的通知胶囊监听方法所属的类(这一份插件文件里一个都找不到时为空)、
+     * 装的时候读的插件文件、装上的挂钩(找到的监听、卡片内容与服务名单两处、撤掉名单监听一处),以及这一代送过数据的监听者编号。
      * 插件重新加载后,新一代收到数据、这一代的监听者和记录管理都已经不在时撤掉([retireOlderThan]),不再留住换下来的插件。
      */
-    private class Generation(val loader: ClassLoader, val listener: Class<*>?, val file: PluginFile) {
+    private class Generation(val loader: ClassLoader, val listeners: Set<Class<*>>, val file: PluginFile) {
         val hooks = mutableListOf<XposedInterface.HookHandle>()
         val ownerIds: MutableSet<String> = Collections.synchronizedSet(linkedSetOf())
         /** 挂钩所在的类是哪些类加载器定义的(记录管理是这一代的,就认得出) */
@@ -124,28 +124,28 @@ object OfficialCloudHook {
             // 同一插件可能有多个加载器(壳/业务分开),在这个加载器上换不出方法按"锚点不在此"处理,不炸安装。
             val methods = scan.listeners.mapValues { (_, ref) -> ref?.let { runCatching { it.resolve(loader) }.getOrNull() } }
             val unresolved = methods.filterValues { it == null }.keys
-            val ownerClasses = methods.values.mapNotNull { it?.declaringClass }.distinct()
-            // 通知胶囊的监听者:三个监听方法都在同一个类上才算找到;这个类加载器转交给已经装好的那一份时不装第二遍
-            val found = ownerClasses.singleOrNull()?.takeIf { unresolved.isEmpty() }
-            val shared = found != null && synchronized(generations) { generations.any { it.listener === found } }
-            val listener = found?.takeUnless { shared }
+            val resolvedAll = methods.mapNotNull { (change, method) -> method?.let { change to it } }.toMap()
+            val resolvedOwners = resolvedAll.values.mapTo(linkedSetOf()) { it.declaringClass }
+            // 通知胶囊的监听方法找到几个装几个(找不到的写进日志,不再全废);别代已经挂过的方法不挂第二遍
+            val resolved = resolvedAll.filterValues(::unhookedMethod)
+            val listenerClasses = resolved.values.mapTo(linkedSetOf()) { it.declaringClass }
+            val allShared = resolvedAll.isNotEmpty() && resolved.isEmpty()
             // 系统服务卡片的挂点(OPPO 接口):这个类加载器里换得出、还没有哪一代挂过的那几个类
             val interceptors = scan.interceptors.filter { unhooked(loader, it) }
             val observers = scan.observers.filter { unhooked(loader, it) }
             val manager = unhooked(loader, OfficialCloudSeedlingReader.MANAGER)
             val publicApi = interceptors.isNotEmpty() || observers.isNotEmpty() || manager
-            if (listener == null && !publicApi) {
-                if (shared) com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners already installed for the loader on $apk")
+            if (resolved.isEmpty() && !publicApi) {
+                if (allShared) com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners already installed for the loader on $apk")
                 // 什么都没有:插件的外壳、只管资源的类加载器或别的插件;有监听者的类却听不了:这一代插件听不了
-                else unavailable(apk, "listener anchors unresolved: missing=$unresolved owners=${ownerClasses.map { it.name }}",
-                    superseded = replaced || ownerClasses.isNotEmpty())
+                else unavailable(apk, "listener anchors unresolved: missing=$unresolved owners=${resolvedOwners.map { it.name }}",
+                    superseded = replaced || resolvedOwners.isNotEmpty())
                 return
             }
             val verified = scan.verified
-            val generation = Generation(loader, listener, identity)
+            val generation = Generation(loader, listenerClasses, identity)
             try {
-                if (listener != null) methods.forEach { (change, nullableMethod) ->
-                    val method = nullableMethod!!
+                resolved.forEach { (change, method) ->
                     // 交给显示之前:通知变成的胶囊按星河岛的决定改状态栏开关(重放时也改,重放就是为了让系统按新开关重算)
                     val before: (XposedInterface.Chain) -> Any? = { chain ->
                         (chain.getArg(0) as? List<*>)?.let { runCatching { OfficialCloudYield.beforeList(it) } }
@@ -162,8 +162,10 @@ object OfficialCloudHook {
                                 generation.ownerIds += ownerId
                                 diagnoseArrival(ownerId, owner, change, data)
                                 synchronized(replays) {
-                                    if (change == CloudChange.REPLACE) {
-                                        replays[ownerId] = Replay(WeakReference(owner), method, data, Handler(Looper.myLooper() ?: Looper.getMainLooper()))
+                                    if (change == CloudChange.REPLACE || ownerId !in replays) {
+                                        // 全量替换没挂上时用这次送到的方法回放(整份按「变了」再交,系统照样重算)
+                                        replays[ownerId] = Replay(WeakReference(owner), methods[CloudChange.REPLACE] ?: method, data,
+                                            Handler(Looper.myLooper() ?: Looper.getMainLooper()))
                                     } else replays[ownerId]?.let { replay ->
                                         fun key(value: Any) = OfficialCloudReflection.nativeKey(value) ?: "object:${System.identityHashCode(value)}"
                                         val current = replay.data.associateByTo(linkedMapOf(), ::key)
@@ -186,13 +188,15 @@ object OfficialCloudHook {
                 throw failure
             }
             // 系统服务卡片的读法和让位用同一处挂钩(读到的事才让位);通知胶囊的让位跟着上面的监听
-            generation.hooks += OfficialCloudYield.install(loader, interceptors, observers, manager, apk)
+            generation.hooks += OfficialCloudYield.install(loader, interceptors, observers, manager, apk, ::unhookedMethod)
             OfficialCloudSource.reportVisibility()
             synchronized(generations) { generations += generation }
-            com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners installed; notification capsules=${listener != null} reviewed plugin=$verified on $apk")
-            if (listener == null && !shared) com.astraflow.fluidcloud.hook.Log.w(TAG, "notification capsules unreadable on $apk: " +
-                "listener anchors unresolved: missing=$unresolved owners=${ownerClasses.map { it.name }}")
-            Logger.xposedLog(TAG, "official event listeners installed; notification capsules=${listener != null} capsule yield=${OfficialCloudYield.status.report}")
+            com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners installed; notification capsules=${listenerClasses.isNotEmpty()} reviewed plugin=$verified on $apk")
+            if (resolved.isEmpty() && !allShared) com.astraflow.fluidcloud.hook.Log.w(TAG, "notification capsules unreadable on $apk: " +
+                "listener anchors unresolved: missing=$unresolved owners=${resolvedOwners.map { it.name }}")
+            else if (unresolved.isNotEmpty()) com.astraflow.fluidcloud.hook.Log.w(TAG,
+                "notification capsule listeners incomplete on $apk: missing=$unresolved")
+            Logger.xposedLog(TAG, "official event listeners installed; notification capsules=${listenerClasses.isNotEmpty()} capsule yield=${OfficialCloudYield.status.report}")
         }.onFailure {
             Logger.e(TAG, "official event listeners unavailable", it)
             // 这个类加载器上有监听者的类却装不上:没装上的正是这一代插件
@@ -205,6 +209,10 @@ object OfficialCloudHook {
         val type = runCatching { Class.forName(name, false, loader) }.getOrNull() ?: return false
         return synchronized(generations) { generations.none { generation -> generation.hooks.any { it.executable.declaringClass === type } } }
     }
+
+    /** 这个方法还没有哪一代挂过(跨类加载器共享的父类方法只挂一遍,子类的调用一样被拦) */
+    private fun unhookedMethod(method: Method): Boolean =
+        synchronized(generations) { generations.none { generation -> generation.hooks.any { it.executable == method } } }
 
     /** 交给 OfficialCloudSource 的每一份数据带的版本号(通知胶囊和系统服务卡片共用,越新越大) */
     fun nextRevision(): Long = sequence.incrementAndGet()
@@ -241,7 +249,8 @@ object OfficialCloudHook {
         val retired = synchronized(generations) {
             val older = generations.subList(0, generations.indexOf(current).coerceAtLeast(0))
                 .filter { old -> old.file.path == current.file.path &&
-                    synchronized(owners) { old.listener == null || owners.keys.none(old.listener::isInstance) } && old.definers.none(managers::contains) }
+                    synchronized(owners) { old.listeners.isEmpty() || owners.keys.none { o -> old.listeners.any { cls -> cls.isInstance(o) } } } &&
+                    old.definers.none(managers::contains) }
             generations.removeAll(older)
             older
         }

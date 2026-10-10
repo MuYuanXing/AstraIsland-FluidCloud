@@ -78,7 +78,6 @@ object OfficialCloudSource {
             if (next == settings) return@Runnable
             settings = next
             synchronize()
-            OfficialCloudYield.refresh()
         }
         if (Looper.myLooper() == Looper.getMainLooper()) apply.run() else main.post(apply)
     }
@@ -286,7 +285,9 @@ object OfficialCloudSource {
             }
             actions?.retain(records.mapTo(HashSet()) { it.snapshot.key })
             AdapterBridge.push(events, settings)
-            if (remapClaims()) OfficialCloudYield.refresh()
+            remapClaims()
+            // 每批系统事件都核对一遍让位:决定变了按现在的改,系统在原来的对象上把开关改写回去的也盖得上
+            OfficialCloudYield.refresh()
         }.onFailure { reportFailure("synchronize", it, null) }
     }
 
@@ -299,10 +300,9 @@ object OfficialCloudSource {
         pendingIdentities = set(EventBridge.KEY_PENDING)
         shownKinds = set(EventBridge.KEY_SHOWN_KINDS)
         islandActive = state.getBoolean(EventBridge.KEY_ACTIVE)
-        val allowed = state.getBoolean(EventBridge.KEY_YIELD_ALLOWED)
-        val changed = allowed != yieldAllowed
-        yieldAllowed = allowed
-        if (remapClaims() || changed) OfficialCloudYield.refresh()
+        yieldAllowed = state.getBoolean(EventBridge.KEY_YIELD_ALLOWED)
+        remapClaims()
+        OfficialCloudYield.refresh()
     }
 
     /**
