@@ -61,7 +61,7 @@ class OfficialCloudActions(
     /** 最近一次按下的按钮(这件事 + 按钮编号)这一下打开了页面没有;星河岛按成之后立即来问,决定卡片是否立即收起(现行规则「展开卡片」)。 */
     @Volatile private var lastPress: Pair<String, Boolean>? = null
 
-    /** 这颗按钮刚才这一下打开了页面没有:系统原按钮对着的是页面,或登记的几种做法里实际用上的是打开页面,或游戏复活倒计时的按钮打开了游戏;交给提供方处理的不算(星河岛不知道提供方会不会打开应用)。 */
+    /** 这颗按钮刚才这一下打开了页面没有:系统原按钮对着的是页面,或登记的几种做法里实际用上的是打开页面,或「游戏倒计时」的按钮打开了游戏;交给提供方处理的不算(星河岛不知道提供方会不会打开应用)。 */
     fun openedPage(key: String, buttonId: String): Boolean = lastPress?.let { it.first == "$key|$buttonId" && it.second } == true
 
     /** 记下这件事当前的内容;返回点卡片能不能打开东西。 */
@@ -96,7 +96,7 @@ class OfficialCloudActions(
         if (!callControl && keyguard?.isDeviceLocked != false) return "device locked"
         if (call) return if (performCall(record, buttonId)) null else "call control failed"
         val button = find(record, buttonId) ?: return "button gone"
-        // 游戏复活倒计时卡片上的按钮(「开始战斗」)和点卡片一样打开来源游戏
+        // 「游戏倒计时」卡片上的按钮(例如「开始战斗」)和点卡片一样打开来源游戏
         if (gameCountdown(record)) {
             if (!openApp(record)) return "app failed"
             lastPress = "$key|$buttonId" to true
@@ -127,7 +127,7 @@ class OfficialCloudActions(
         }
     }
 
-    /** 点卡片:系统卡片自己的点击动作;旧格式卡片用通知的打开目标;都没有时交给系统卡片引擎处理整张卡的点击。游戏复活倒计时打开来源游戏。 */
+    /** 点卡片:系统卡片自己的点击动作;旧格式卡片用通知的打开目标;都没有时交给系统卡片引擎处理整张卡的点击。「游戏倒计时」打开来源游戏。 */
     private fun open(record: CloudRecord): Boolean {
         if (gameCountdown(record)) return openApp(record)
         record.content.cardAction?.let { return execute(record, it) }
@@ -139,7 +139,7 @@ class OfficialCloudActions(
         return OfficialCloudReflection.call(target, "performCardClickAction", args) == true
     }
 
-    /** 流体云的游戏复活倒计时(王者荣耀,按服务号或服务意图认);闹钟的计时器、系统的游戏计时不算。 */
+    /** 流体云的「游戏倒计时」(它支持的游戏都算,按服务号或服务意图认);闹钟的计时器、系统的游戏计时不算。 */
     private fun gameCountdown(record: CloudRecord): Boolean = OfficialCloudServices.kind(record.snapshot) == EventKind.GAME_COUNTDOWN
 
     /**
