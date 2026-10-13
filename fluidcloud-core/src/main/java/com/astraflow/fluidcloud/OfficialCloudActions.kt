@@ -61,7 +61,7 @@ class OfficialCloudActions(
     /** 最近一次按下的按钮(这件事 + 按钮编号)这一下打开了页面没有;星河岛按成之后立即来问,决定卡片是否立即收起(现行规则「展开卡片」)。 */
     @Volatile private var lastPress: Pair<String, Boolean>? = null
 
-    /** 这颗按钮刚才这一下打开了页面没有:系统原按钮对着的是页面,或登记的几种做法里实际用上的是打开页面;交给提供方处理的不算(星河岛不知道提供方会不会打开应用)。 */
+    /** 这颗按钮刚才这一下打开了页面没有:系统原按钮对着的是页面,或登记的几种做法里实际用上的是打开页面,或游戏复活倒计时的按钮打开了游戏;交给提供方处理的不算(星河岛不知道提供方会不会打开应用)。 */
     fun openedPage(key: String, buttonId: String): Boolean = lastPress?.let { it.first == "$key|$buttonId" && it.second } == true
 
     /** 记下这件事当前的内容;返回点卡片能不能打开东西。 */
@@ -96,6 +96,12 @@ class OfficialCloudActions(
         if (!callControl && keyguard?.isDeviceLocked != false) return "device locked"
         if (call) return if (performCall(record, buttonId)) null else "call control failed"
         val button = find(record, buttonId) ?: return "button gone"
+        // 游戏复活倒计时卡片上的按钮(「开始战斗」)和点卡片一样打开来源游戏
+        if (gameCountdown(record)) {
+            if (!openApp(record)) return "app failed"
+            lastPress = "$key|$buttonId" to true
+            return null
+        }
         button.pending?.let {
             if (!send(it)) return "intent failed"
             lastPress = "$key|$buttonId" to opensPage(it)
@@ -137,7 +143,7 @@ class OfficialCloudActions(
     private fun gameCountdown(record: CloudRecord): Boolean = OfficialCloudServices.kind(record.snapshot) == EventKind.GAME_COUNTDOWN
 
     /**
-     * 打开来源游戏的启动页:游戏在后台时回到原来的画面(系统卡片自己的点击回不到后台的游戏)。
+     * 打开来源游戏的启动页:游戏在后台时回到原来的画面(系统卡片自己的点击和按钮回不到后台的游戏)。
      * 和打开页面一样,查到启动页就把打开交给后台线程,立即返回;没打开的写进日志。
      */
     private fun openApp(record: CloudRecord): Boolean {
