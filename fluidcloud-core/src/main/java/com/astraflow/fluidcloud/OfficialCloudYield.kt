@@ -22,6 +22,8 @@ object OfficialCloudYield {
         private set
     @Volatile private var confirmed: Set<String> = emptySet()
     @Volatile private var effective: Set<String> = emptySet()
+    /** 已完成交接后结束的事件不交还系统,继续排除原生显示部分残留的同一条旧记录。 */
+    private var finished: Set<String> = emptySet()
     private class Display(val method: Method, val entry: Any) {
         var owner = WeakReference<Any>(null)
     }
@@ -139,19 +141,22 @@ object OfficialCloudYield {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (refreshing.get() == true) return
         val desired = OfficialCloudSource.requestedNativeKeys()
-        if (applied == desired) return
-        effective = desired
+        val alive = OfficialCloudSource.aliveNativeKeys()
+        finished = (finished + (confirmed - alive)) - alive
+        val target = desired + finished
+        if (applied == target) { confirmed = desired; return }
+        effective = target
         testDisplay?.let { display ->
-            runCatching { display(desired) }.onSuccess {
-                confirmed = it.intersect(desired); effective = confirmed
-                applied = if (confirmed == desired) desired else null
-            }.onFailure { confirmed = emptySet(); effective = emptySet(); applied = null }
+            runCatching { display(target) }.onSuccess {
+                confirmed = it.intersect(desired); effective = it.intersect(target)
+                applied = if (effective == target) target else null
+            }.onFailure { confirmed = emptySet(); effective = finished; applied = null }
             return
         }
         val targets = synchronized(displays) { displays.values.distinctBy { it.method } }
-        if (targets.isEmpty()) { confirmed = emptySet(); effective = emptySet(); return }
+        if (targets.isEmpty()) { confirmed = emptySet(); effective = finished; return }
         if (targets.any { it.owner.get() == null }) {
-            confirmed = emptySet(); effective = emptySet(); updateStatus(Status.PENDING); return
+            confirmed = emptySet(); effective = finished; updateStatus(Status.PENDING); return
         }
         deliveries = 0
         synchronized(failed) { failed.clear() }
@@ -167,16 +172,17 @@ object OfficialCloudYield {
             }.all { it }
         val success = try { dispatch() } finally { refreshing.set(false) }
         if (success) {
-            confirmed = desired - synchronized(failed) { failed.toSet() }
-            applied = if (confirmed == desired) desired else null
-            updateStatus(if (confirmed == desired) Status.AVAILABLE else Status.PARTIAL)
+            effective = target - synchronized(failed) { failed.toSet() }
+            confirmed = desired.intersect(effective)
+            applied = if (effective == target) target else null
+            updateStatus(if (effective == target) Status.AVAILABLE else Status.PARTIAL)
         } else {
             confirmed = emptySet(); applied = null
+            effective = finished
             updateStatus(if (success) Status.PENDING else Status.UNAVAILABLE)
         }
-        if (confirmed != desired) {
-            // 交接未确认的事件由系统显示;撤销本次试行过滤,再按当前真实记录恢复显示。
-            effective = confirmed
+        if (effective != target) {
+            // 未完成交接的在途事件交还系统;已结束的旧事件不恢复显示。
             refreshing.set(true)
             try { dispatch() } finally { refreshing.set(false) }
         }
@@ -220,7 +226,7 @@ object OfficialCloudYield {
         synchronized(failed) { failed.clear() }
         synchronized(observedHolders) { observedHolders.clear() }
         synchronized(noted) { noted.clear() }
-        status = Status.UNKNOWN; confirmed = emptySet(); effective = emptySet(); applied = null; testDisplay = null
+        status = Status.UNKNOWN; confirmed = emptySet(); effective = emptySet(); finished = emptySet(); applied = null; testDisplay = null
         refreshPosted = false; deliveries = 0
     }
 }

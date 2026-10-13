@@ -154,6 +154,7 @@ object OfficialCloudSource {
     /** 当前藏起的系统胶囊个数(诊断用)。 */
     fun hiddenCount(): Int = OfficialCloudYield.yieldedCount()
     fun requestedNativeKeys(): Set<String> = (nativeClaims + alwaysClaims + spentClaims).filterTo(linkedSetOf(), ::suppressesNative)
+    fun aliveNativeKeys(): Set<String> = store.aliveNativeKeys()
     fun confirmedIdentities(): Set<String> {
         val done = OfficialCloudYield.confirmedKeys()
         return (handledIdentities + spentIdentities + alwaysIdentities).filterTo(linkedSetOf()) { identity ->
