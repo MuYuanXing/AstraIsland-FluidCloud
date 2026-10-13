@@ -72,7 +72,7 @@ class OfficialCloudActions(
 
     fun openable(record: CloudRecord): Boolean = record.content.cardAction != null ||
         record.snapshot.notification?.notification?.contentIntent != null ||
-        record.snapshot.nativeCard != null || record.snapshot.nativeSeedling != null
+        record.snapshot.nativeCard != null || record.snapshot.nativeSeedling != null || gameCountdown(record)
 
     fun perform(key: String, buttonId: String?): Boolean {
         lastPress = null
@@ -121,8 +121,9 @@ class OfficialCloudActions(
         }
     }
 
-    /** 点卡片:系统卡片自己的点击动作;旧格式卡片用通知的打开目标;都没有时交给系统卡片引擎处理整张卡的点击。 */
+    /** 点卡片:系统卡片自己的点击动作;旧格式卡片用通知的打开目标;都没有时交给系统卡片引擎处理整张卡的点击。游戏复活倒计时打开来源游戏。 */
     private fun open(record: CloudRecord): Boolean {
+        if (gameCountdown(record)) return openApp(record)
         record.content.cardAction?.let { return execute(record, it) }
         record.snapshot.notification?.notification?.contentIntent?.let { return send(it) }
         val target = record.snapshot.nativeCard ?: record.snapshot.nativeSeedling ?: return false
@@ -130,6 +131,29 @@ class OfficialCloudActions(
         if (OfficialCloudReflection.call(target, "performCardClickAction", args) == true) return true
         args["key_card_size"] = 7
         return OfficialCloudReflection.call(target, "performCardClickAction", args) == true
+    }
+
+    /** 流体云的游戏复活倒计时(王者荣耀,按服务号或服务意图认);闹钟的计时器、系统的游戏计时不算。 */
+    private fun gameCountdown(record: CloudRecord): Boolean = OfficialCloudServices.kind(record.snapshot) == EventKind.GAME_COUNTDOWN
+
+    /**
+     * 打开来源游戏的启动页:游戏在后台时回到原来的画面(系统卡片自己的点击回不到后台的游戏)。
+     * 和打开页面一样,查到启动页就把打开交给后台线程,立即返回;没打开的写进日志。
+     */
+    private fun openApp(record: CloudRecord): Boolean {
+        val app = OfficialCloudServices.sourcePackage(record.snapshot)
+        val launch = runCatching { context.packageManager.getLaunchIntentForPackage(app) }.getOrNull()
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return false
+        val request = record.snapshot.key.hashCode()
+        return runCatching {
+            worker.execute {
+                val opened = runCatching {
+                    send(PendingIntent.getActivity(context, request, launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                }.getOrDefault(false)
+                if (!opened) com.astraflow.fluidcloud.hook.Log.w(TAG, "app did not open: $app")
+            }
+            true
+        }.getOrDefault(false)
     }
 
     /** 按登记的动作执行;登记了几种做法时按顺序试,前一种打不开再用下一种(与系统卡片引擎一致)。 */
