@@ -88,7 +88,13 @@ object AdapterBridge {
     private fun handle(request: Bundle): Bundle? = when (request.getString(EventBridge.KEY_OP)) {
         EventBridge.OP_READY -> { hello(); null }
         // 星河岛在系统界面主线程上报来时当场处理
-        EventBridge.OP_STATE -> { if (accepted) { if (Looper.myLooper() == Looper.getMainLooper()) onState(request) else main.post { onState(request) } }; null }
+        EventBridge.OP_STATE -> {
+            // 显示交接只在主线程同步执行;异步投递不能作为已经执行的答复。
+            if (accepted && Looper.myLooper() == Looper.getMainLooper()) {
+                onState(request)
+                Bundle().apply { putStringArray(EventBridge.KEY_CONFIRMED, OfficialCloudSource.confirmedIdentities().toTypedArray()) }
+            } else null
+        }
         EventBridge.OP_PERFORM -> Bundle().apply {
             putBoolean(EventBridge.KEY_DONE, accepted && OfficialCloudSource.perform(request.getString(EventBridge.KEY_IDENTITY).orEmpty(),
                 request.getString(EventBridge.KEY_ACTION)))
@@ -107,11 +113,12 @@ object AdapterBridge {
     const val STATUS_REFUSED = "refused:"
 
     /** 把全部事件和接入件的设置交给星河岛 */
-    fun push(events: List<SystemEvent>, settings: FluidCloudSettings) {
+    fun push(events: List<SystemEvent>, settings: FluidCloudSettings, alive: Set<String>) {
         if (!accepted) return
         EventBridge.send(EventBridge.ISLAND, EventBridge.request(EventBridge.OP_EVENTS) {
             putBundle(EventBridge.KEY_EVENTS, SystemEventCodec.encode(events))
             putBundle(EventBridge.KEY_SETTINGS, settings.toBundle())
+            putStringArray(EventBridge.KEY_ALIVE, alive.toTypedArray())
         })
     }
 }

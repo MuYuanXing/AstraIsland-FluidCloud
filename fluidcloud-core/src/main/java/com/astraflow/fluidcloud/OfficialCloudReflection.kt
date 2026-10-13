@@ -110,13 +110,13 @@ object OfficialCloudReflection {
     /**
      * 系统流体云定这件事在这个位置([entry])显不显示(或锁屏时显不显示,[lockScreen]),读法与系统流体云插件一致:
      * 还没有卡片内容时看服务自带的「在哪些位置显示」(没写这个位置时,服务类别 2 的显示,锁屏同样);有了内容看内容里写的,
-     * 内容没写这个位置时看内容的 shouldShow。星河岛让位时改过的开关按系统原来的读(现行规则「系统事件接入」)。
+     * 内容没写这个位置时看内容的 shouldShow。显示交接不修改这些原始设置。
      */
     fun seedlingShows(service: Any?, ui: Any?, entry: Int?, lockScreen: Boolean): Boolean {
         val getter = if (lockScreen) "getLockScreenShowHostMap" else "getShowHostMap"
-        val fromOptions = entry?.let { OfficialCloudYield.original(call(call(service, "getNewSeedlingCardOptions"), getter))?.get(it) } as? Boolean
+        val fromOptions = entry?.let { (call(call(service, "getNewSeedlingCardOptions"), getter) as? Map<*, *>)?.get(it) } as? Boolean
         if (ui == null) return fromOptions ?: ((call(service, "getServiceCategory") as? Number)?.toInt() == SERVICE_CATEGORY_DEFAULT_SHOWN)
-        val fromData = entry?.let { OfficialCloudYield.original(call(ui, getter))?.get(it) } as? Boolean
+        val fromData = entry?.let { (call(ui, getter) as? Map<*, *>)?.get(it) } as? Boolean
         return fromData ?: (call(ui, "getShouldShow") as? Boolean ?: false)
     }
 

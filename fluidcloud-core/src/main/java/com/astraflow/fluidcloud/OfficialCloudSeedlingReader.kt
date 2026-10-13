@@ -94,10 +94,6 @@ object OfficialCloudSeedlingReader {
                     "adopted=${adoptions.map { service(it.key) }} filtered=${services.size - kept.size}")
             emit(owner)
         }
-        // 认领到的状态栏卡片:让位也照样认领,星河岛定下要让位时把最近一份内容再交一次,不等它下一次更新
-        adoptions.filter { it.entrance == STATUS_BAR }.forEach { entry ->
-            runCatching { entry.card?.let { OfficialCloudYield.adopt(entry.key, it, entry.service, entry.user) } }
-        }
         OfficialCloudHook.onReaderData(manager.javaClass.classLoader)
     }
 

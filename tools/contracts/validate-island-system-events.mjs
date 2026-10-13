@@ -26,6 +26,13 @@ function expectSet(label, actual, expected) {
 
 // ── 标准清单本身 ──
 const standard = JSON.parse(read('contracts', 'island-system-events.v1.json'))
+const bridge = read('island-events', 'src/main/java/com/astraisland/events/EventBridge.kt')
+const bridgeVersion = Number(bridge.match(/const val VERSION = (\d+)/)?.[1])
+if (standard.bridge.version !== bridgeVersion) fail('显示交接交换版本不一致')
+else pass('显示交接交换版本一致')
+const bridgeValue = key => bridge.match(new RegExp(`const val ${key} = "([^"]+)"`))?.[1]
+expectSet('事件存续交换字段', standard.bridge.events, ['KEY_EVENTS', 'KEY_SETTINGS', 'KEY_ALIVE'].map(bridgeValue))
+expectSet('显示交接确认字段', standard.bridge.stateReply, [bridgeValue('KEY_CONFIRMED')])
 const kindIds = standard.kinds.map(k => k.id)
 if (new Set(kindIds).size !== kindIds.length) fail('事件种类有重复的编号')
 else pass(`事件种类 ${kindIds.length} 种,编号不重复`)

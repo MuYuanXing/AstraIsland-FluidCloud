@@ -74,6 +74,8 @@ class OfficialCloudStore {
     fun keys(): Set<String> = active().mapTo(linkedSetOf()) { it.snapshot.key }
     /** 所有显示位置送来的、还在的系统记录编号(不论系统此刻显不显示、结没结束) */
     fun allNativeKeys(): Set<String> = owners.values.flatMapTo(linkedSetOf()) { it.entries.keys }
+    fun aliveIdentities(): Set<String> = owners.values.flatMap { it.entries.values }.mapTo(linkedSetOf()) { it.snapshot.key } - ended
+    fun previous(owner: String, nativeKey: String): CloudRecord? = owners[owner]?.entries?.get(nativeKey)
     fun nativeKeys(key: String): Set<String> = owners.values.flatMap { it.entries.values }.filter { it.snapshot.key == key }
         .mapTo(linkedSetOf()) { it.snapshot.nativeKey }
 }

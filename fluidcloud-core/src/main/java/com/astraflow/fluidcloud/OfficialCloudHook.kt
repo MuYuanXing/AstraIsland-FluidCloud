@@ -1,14 +1,11 @@
 package com.astraflow.fluidcloud
 
-import android.os.Handler
-import android.os.Looper
 import com.astraflow.fluidcloud.hook.HookHelper
 import com.astraflow.fluidcloud.hook.PluginClassLoaderInterceptor
 import com.astraflow.fluidcloud.hook.Logger
 import io.github.libxposed.api.XposedInterface
 import org.luckypray.dexkit.DexKitBridge
 import java.io.File
-import java.lang.ref.WeakReference
 import java.lang.reflect.Method
 import java.security.MessageDigest
 import java.util.Collections
@@ -21,13 +18,13 @@ import java.util.concurrent.atomic.AtomicLong
  * 在系统流体云插件上装读数据和让位的挂钩(现行规则「系统事件接入」)。接收、模板引擎、服务开关和通知原件均由系统继续维护。
  * - 系统服务的卡片:按 OPPO 接口找挂点(卡片内容、服务名单、撤掉名单监听),由 OfficialCloudSeedlingReader 读,不认插件的日志文字;
  * - 通知变成的胶囊:OPPO 接口里没有,旁读插件自己的数据监听(按监听方法里写日志用的文字找),只读这一种;
- * - 星河岛接手的事让系统胶囊让位用系统自己的「在哪些位置显示」开关(OfficialCloudYield),不改系统内部的方法。
+ * - 原生胶囊与展开卡片在显示入口执行归属(OfficialCloudYield),数据读取不改系统显示设置。
  */
 object OfficialCloudHook {
     private const val TAG = "OfficialCloud"
     /**
      * 实际反编译核对过的那一版插件。只在这一版上读通知变成的胶囊里系统已经画好的控件(取控件用的是这一版里的短名字);
-     * 别的版本照样接收、照样让位,只是不读这些控件。
+     * 其它版本不读这些控件;数据读取与显示交接能力分别核对。
      */
     const val VERIFIED_PLUGIN_SHA256 = "ad74975487c99d7a9ed29ebf8f5f644283a3ad096f89b75e2bca3003cca1be7a"
     val anchors = linkedMapOf(
@@ -38,12 +35,9 @@ object OfficialCloudHook {
     /** 装着数据监听的各代插件,按装上的先后 */
     private val generations = mutableListOf<Generation>()
     private val owners = WeakHashMap<Any, String>()
-    private val replays = linkedMapOf<String, Replay>()
     private val sequence = AtomicLong()
     private val ownerSequence = AtomicLong()
-    private val replaying = ThreadLocal.withInitial { false }
     @Volatile private var registered = false
-    private data class Replay(val owner: WeakReference<Any>, val method: Method, var data: List<Any>, val handler: Handler)
 
     /** 一份插件文件:路径、大小、修改时间都一样就是同一份,在它上面找过的结果照用 */
     data class PluginFile(val path: String, val size: Long, val modified: Long)
@@ -51,7 +45,7 @@ object OfficialCloudHook {
     /** 监听方法在插件里的位置(类名、方法名、参数类型),按每个类加载器再换成方法;只记名字,不留住插件的类 */
     data class MethodRef(val className: String, val name: String, val params: List<String>) {
         fun resolve(loader: ClassLoader): Method = Class.forName(className, false, loader)
-            .getDeclaredMethod(name, *params.map { Class.forName(it, false, loader) }.toTypedArray())
+            .getDeclaredMethod(name, *params.map { if (it == "boolean") java.lang.Boolean.TYPE else Class.forName(it, false, loader) }.toTypedArray())
     }
 
     /**
@@ -61,6 +55,7 @@ object OfficialCloudHook {
     class PluginScan(
         val listeners: Map<CloudChange, MethodRef?>, val verified: Boolean,
         val interceptors: List<String> = emptyList(), val observers: List<String> = emptyList(),
+        val renderers: List<MethodRef> = emptyList(), val refreshDisplay: MethodRef? = null,
     )
 
     /**
@@ -146,14 +141,11 @@ object OfficialCloudHook {
             val generation = Generation(loader, listenerClasses, identity)
             try {
                 resolved.forEach { (change, method) ->
-                    // 交给显示之前:通知变成的胶囊按星河岛的决定改状态栏开关(重放时也改,重放就是为了让系统按新开关重算)
-                    val before: (XposedInterface.Chain) -> Any? = { chain ->
-                        (chain.getArg(0) as? List<*>)?.let { runCatching { OfficialCloudYield.beforeList(it) } }
-                        null
-                    }
-                    val handle = HookHelper.hookMethod(method, before) { chain, result ->
-                        if (!replaying.get()) {
+                    // 通知胶囊的数据读取与显示交接分别处理
+                    val handle = HookHelper.hookMethod(method) { chain, result ->
+                        run {
                             val owner = chain.thisObject
+                            owner?.let(OfficialCloudYield::observeDisplay)
                             // 系统服务卡片由 OfficialCloudSeedlingReader 从 OPPO 接口读,这里只读通知变成的胶囊
                             val data = (chain.getArg(0) as? List<*>)?.filterNotNull()?.take(128)?.filter(OfficialCloudReflection::isCommon)
                             val known = owner?.let { synchronized(owners) { owners[it] } }
@@ -161,19 +153,6 @@ object OfficialCloudHook {
                                 val ownerId = known ?: synchronized(owners) { owners.getOrPut(owner) { "listener-${ownerSequence.incrementAndGet()}" } }
                                 generation.ownerIds += ownerId
                                 diagnoseArrival(ownerId, owner, change, data)
-                                synchronized(replays) {
-                                    if (change == CloudChange.REPLACE || ownerId !in replays) {
-                                        // 全量替换没挂上时用这次送到的方法回放(整份按「变了」再交,系统照样重算)
-                                        replays[ownerId] = Replay(WeakReference(owner), methods[CloudChange.REPLACE] ?: method, data,
-                                            Handler(Looper.myLooper() ?: Looper.getMainLooper()))
-                                    } else replays[ownerId]?.let { replay ->
-                                        fun key(value: Any) = OfficialCloudReflection.nativeKey(value) ?: "object:${System.identityHashCode(value)}"
-                                        val current = replay.data.associateByTo(linkedMapOf(), ::key)
-                                        if (change == CloudChange.REMOVE) data.forEach { current.remove(key(it)) }
-                                        else data.forEach { current[key(it)] = it }
-                                        replay.data = current.values.toList()
-                                    }
-                                }
                                 OfficialCloudSource.receive(ownerId, nextRevision(), change, data, verified)
                                 dropDeadOwners()
                                 retireOlderThan(generation)
@@ -187,8 +166,13 @@ object OfficialCloudHook {
                 generation.hooks.forEach { runCatching { it.unhook() } }
                 throw failure
             }
-            // 系统服务卡片的读法和让位用同一处挂钩(读到的事才让位);通知胶囊的让位跟着上面的监听
-            generation.hooks += OfficialCloudYield.install(loader, interceptors, observers, manager, apk, ::unhookedMethod)
+            // 服务数据入口与原生显示入口独立安装,读取成功不代表可以交接显示。
+            generation.hooks += OfficialCloudReaderHooks.install(loader, interceptors, observers, manager, ::unhookedMethod)
+            if (resolvedAll.isNotEmpty() || scan.renderers.isNotEmpty() || scan.refreshDisplay != null) {
+                val rendering = scan.renderers.mapNotNull { runCatching { it.resolve(loader) }.getOrNull() }
+                val refreshing = scan.refreshDisplay?.let { runCatching { it.resolve(loader) }.getOrNull() }
+                generation.hooks += OfficialCloudYield.installDisplay(loader, rendering, refreshing, ::unhookedMethod)
+            }
             OfficialCloudSource.reportVisibility()
             synchronized(generations) { generations += generation }
             com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners installed; notification capsules=${listenerClasses.isNotEmpty()} reviewed plugin=$verified on $apk")
@@ -255,9 +239,9 @@ object OfficialCloudHook {
             older
         }
         retired.forEach { old ->
+            OfficialCloudYield.retire(old.loader)
             old.hooks.forEach(HookHelper::unhook)
             val ids = synchronized(old.ownerIds) { old.ownerIds.toSet() }
-            synchronized(replays) { ids.forEach(replays::remove) }
             if (ids.isNotEmpty()) OfficialCloudSource.dropOwners(ids)
             com.astraflow.fluidcloud.hook.Log.i(TAG, "listeners of a replaced plugin generation removed on ${old.file.path.substringAfterLast('/')}")
         }
@@ -273,8 +257,18 @@ object OfficialCloudHook {
                 .singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
         }
         fun implementers(api: String) = runCatching { bridge.findClass { matcher { addInterface(api) } }.map { it.name } }.getOrDefault(emptyList())
+        fun display(vararg strings: String) = bridge.findMethod {
+            matcher { usingStrings(*strings); paramCount = 1; returnType = "void" }
+        }.singleOrNull()?.takeIf { it.paramTypeNames.single() in setOf("java.util.ArrayList", "java.util.List") }
+            ?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
+        val renderers = listOfNotNull(display("CapsulesRepository", "onDataChanged, hasSystem["),
+            display("CardsRepository", "onDataChanged, size:"))
+        val refresh = bridge.findMethod {
+            matcher { usingStrings("notifyEntryDataChanged skip due to released"); paramCount = 2; returnType = "void" }
+        }.singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
         PluginScan(listeners, verified = hash(path) == VERIFIED_PLUGIN_SHA256,
-            interceptors = implementers(OfficialCloudYield.INTERCEPTOR), observers = implementers(OfficialCloudYield.OBSERVER))
+            interceptors = implementers(OfficialCloudYield.INTERCEPTOR), observers = implementers(OfficialCloudYield.OBSERVER),
+            renderers = renderers, refreshDisplay = refresh)
     }
 
     /** 检查用:等已经交给后台线程的安装做完 */
@@ -285,7 +279,6 @@ object OfficialCloudHook {
     fun resetForTest() {
         synchronized(generations) { generations.clear() }
         synchronized(owners) { owners.clear() }
-        synchronized(replays) { replays.clear() }
         synchronized(scans) { scans.clear() }
         scanner = ::scan
     }
@@ -295,8 +288,6 @@ object OfficialCloudHook {
      * 签名变了才写。看得出系统送来了什么、卡片排好没有,不用猜。
      */
     private val arrivals = linkedSetOf<String>()
-    private val replayCount = AtomicLong()
-    @Volatile private var lastReplayLogAt = 0L
 
     private fun diagnoseArrival(ownerId: String, owner: Any, change: CloudChange, data: List<Any>) {
         runCatching {
@@ -312,29 +303,13 @@ object OfficialCloudHook {
 
     /** 监听者对象已经不在了(插件重载后换了新对象):它留下的记录一并撤掉,不留下永远不会结束的卡片。 */
     private fun dropDeadOwners() {
-        val dead = synchronized(replays) {
-            replays.entries.filter { it.value.owner.get() == null }.map { it.key }.also { gone -> gone.forEach(replays::remove) }
+        val live = synchronized(owners) { owners.values.toSet() }
+        val dead = synchronized(generations) {
+            generations.flatMapTo(linkedSetOf()) { generation ->
+                synchronized(generation.ownerIds) { (generation.ownerIds - live).also { generation.ownerIds.removeAll(it) } }
+            }
         }
-        if (dead.isNotEmpty()) OfficialCloudSource.dropOwners(dead.toSet())
-    }
-
-    /** 仅重放最后收到的原列表，促使系统重新计算显示；不删除服务或停止订阅。 */
-    fun refreshNativeDisplay() {
-        val snapshot = synchronized(replays) { replays.values.toList() }
-        dropDeadOwners()
-        // 重放次数写进日志(最多一秒一行),看得出是不是在反复促使系统重算
-        val count = replayCount.incrementAndGet()
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastReplayLogAt >= 1000) {
-            lastReplayLogAt = now
-            com.astraflow.fluidcloud.hook.Log.i(TAG, "native display refresh #$count owners=${snapshot.size} hidden=${OfficialCloudSource.hiddenCount()}")
-        }
-        snapshot.forEach { replay -> replay.handler.post {
-            val owner = replay.owner.get() ?: return@post
-            replaying.set(true)
-            try { runCatching { replay.method.invoke(owner, replay.data) }.onFailure { com.astraflow.fluidcloud.hook.Log.w(TAG, "native display refresh failed", it) } }
-            finally { replaying.set(false) }
-        } }
+        if (dead.isNotEmpty()) OfficialCloudSource.dropOwners(dead)
     }
 
     private fun hash(path: String): String? = runCatching {

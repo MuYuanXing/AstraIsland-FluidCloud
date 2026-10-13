@@ -287,6 +287,8 @@ internal data class Health(
     fun capsuleText() = when (capsule) {
         CAPSULE_AVAILABLE -> "可用"
         CAPSULE_UNAVAILABLE -> "不可用"
+        "pending" -> "等待显示交接"
+        "partial" -> "部分未接管"
         else -> if (running == null && !checked) "检查中" else "尚未确定"
     }
 
@@ -301,6 +303,7 @@ internal data class Health(
         island == REFUSED_SIGNATURE -> StatusNote(StatusRow.ISLAND, "需在星流中允许本机测试，或从插件商店重新安装本插件")
         island?.startsWith(AdapterBridge.STATUS_REFUSED) == true -> StatusNote(StatusRow.ISLAND, "需从星流的插件商店重新安装本插件")
         capsule == CAPSULE_UNAVAILABLE -> StatusNote(StatusRow.CAPSULE, CAPSULE_UNAVAILABLE_NOTE)
+        capsule == "partial" -> StatusNote(StatusRow.CAPSULE, "部分事件无法完成显示交接，已交由系统显示")
         else -> null
     }
 
@@ -323,7 +326,7 @@ internal enum class StatusRow { ENABLED, RUNNING, ISLAND, CAPSULE }
 internal data class StatusNote(val row: StatusRow, val text: String)
 
 /** 系统无法自动隐藏系统流体云胶囊时,「隐藏系统流体云胶囊」一行下面的提示(只显示星河岛的做法写在使用说明里) */
-internal const val CAPSULE_UNAVAILABLE_NOTE = "当前系统版本不支持，星河岛与系统流体云同时显示"
+internal const val CAPSULE_UNAVAILABLE_NOTE = "无法完成显示交接，对应事件已交由系统显示"
 
 /** 「系统状态」关着时「作为主岛显示」四项名字下面的原因 */
 internal const val STATUS_OFF = "「系统状态」已关闭"

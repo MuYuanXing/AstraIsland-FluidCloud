@@ -36,23 +36,14 @@ object OfficialCloudSource {
     fun islandActiveForTest(active: Boolean) { islandActive = active }
     /** 星河岛此刻能露面:系统胶囊只在能露面时为星河岛接手的事让位 */
     @Volatile private var yieldAllowed = false
-    /** 星河岛接手的事、亮完的提示、一律藏起的、还在等内容的(事件身份,星河岛报来的) */
+    /** 星河岛接手的事、亮完的提示、一律藏起的(事件身份,星河岛报来的) */
     private var handledIdentities: Set<String> = emptySet()
     private var spentIdentities: Set<String> = emptySet()
     private var alwaysIdentities: Set<String> = emptySet()
-    private var pendingIdentities: Set<String> = emptySet()
-    /** 星河岛此刻显示哪些种类的事(事件种类编号) */
-    @Volatile private var shownKinds: Set<String> = emptySet()
     /** 上面几组换成的系统记录编号 */
     @Volatile private var nativeClaims: Set<String> = emptySet()
     @Volatile private var spentClaims: Set<String> = emptySet()
     @Volatile private var alwaysClaims: Set<String> = emptySet()
-    /**
-     * 已经定下让不让位的系统记录编号:星河岛看过的都算,只有刚送到、还读不到内容的等一小会儿。
-     * 没定下的按这件事所属的那一类先定([yieldsByDefault])。
-     */
-    @Volatile private var decidedKeys: Set<String> = emptySet()
-
     /**
      * 在系统界面里开始:收下设置、准备执行按钮,向星河岛打招呼。[packageName]、[versionCode] 是插件自己的,星河岛按它核对。
      * [reportStatus] 把「这台手机能不能让系统胶囊让位」报给插件的页面,[reportIsland] 把星河岛收没收下插件报给插件的页面。
@@ -85,7 +76,7 @@ object OfficialCloudSource {
     fun refresh() { if (Looper.myLooper() == Looper.getMainLooper()) synchronize() else main.post { synchronize() } }
 
     /**
-     * 把「这台手机能不能让系统胶囊让位」报给插件的页面(能;卡片内容那一处装不上或数据监听没装上时不能)。
+     * 把原生显示交接的实际执行状态报给插件页面,数据读取入口不作为成功依据。
      * 还没定下来时也报,页面不沿用上一次开机留下的结果。
      */
     fun reportVisibility() {
@@ -99,7 +90,10 @@ object OfficialCloudSource {
         main.post {
             runCatching {
                 val official = copy.filter(OfficialCloudReflection::isOfficial)
-                val records = if (change == CloudChange.REMOVE) emptyList() else official.mapNotNull { model -> captureSafely(model, revision, reviewedPlugin) }
+                val records = if (change == CloudChange.REMOVE) emptyList() else official.mapNotNull { model ->
+                    captureSafely(model, revision, reviewedPlugin)
+                        ?: OfficialCloudReflection.nativeKey(model)?.let { store.previous(owner, it) }
+                }
                 val removed = official.mapNotNull(OfficialCloudReflection::nativeKey).toSet()
                 // 云卡到货诊断:每类新签名写一行(正式包可见),卡片有没有来、排好没有、带不带按钮、数据与模板读到没有一眼可知。
                 for (record in records) {
@@ -158,7 +152,15 @@ object OfficialCloudSource {
     }
 
     /** 当前藏起的系统胶囊个数(诊断用)。 */
-    fun hiddenCount(): Int = (nativeClaims + alwaysClaims + spentClaims).size
+    fun hiddenCount(): Int = OfficialCloudYield.yieldedCount()
+    fun requestedNativeKeys(): Set<String> = (nativeClaims + alwaysClaims + spentClaims).filterTo(linkedSetOf(), ::suppressesNative)
+    fun confirmedIdentities(): Set<String> {
+        val done = OfficialCloudYield.confirmedKeys()
+        return (handledIdentities + spentIdentities + alwaysIdentities).filterTo(linkedSetOf()) { identity ->
+            val keys = store.nativeKeys(identity)
+            keys.isNotEmpty() && keys.all { it in done }
+        }
+    }
 
     private val unlistedLogged = linkedSetOf<String>()
     private val valueLoggedAt = HashMap<String, Long>()
@@ -243,22 +245,6 @@ object OfficialCloudSource {
     fun suppressesNative(nativeKey: String?): Boolean = nativeKey != null && settings.access && islandActive &&
         (nativeKey in spentClaims || nativeKey in alwaysClaims || (yieldAllowed && nativeKey in nativeClaims))
 
-    /** 这条系统记录星河岛已经定下让不让位了(见 [decidedKeys])。 */
-    fun decided(nativeKey: String): Boolean = nativeKey in decidedKeys
-
-    /** 已经定下的记录里,编号以 [prefix] 开头、以 [suffix] 结尾的那一条(服务名单里的服务还不知道是哪个用户的);没有时为 null。 */
-    fun decidedKey(prefix: String, suffix: String): String? = decidedKeys.firstOrNull { it.startsWith(prefix) && it.endsWith(suffix) }
-
-    /**
-     * 星河岛还没看过的新事件,系统胶囊先按它所属的那一类让不让位:接入开着、星河岛在管事、此刻能露面、星河岛显示这一类;
-     * 系统的充电与电池提示一律让位。看过以后按实际情况定,两者不同时再改一次(现行规则「系统事件接入」)。
-     */
-    fun yieldsByDefault(snapshot: CloudSnapshot): Boolean {
-        if (!settings.access || !islandActive) return false
-        if (OfficialCloudServices.kind(snapshot).id !in shownKinds) return false
-        return OfficialCloudServices.alwaysHidden(snapshot) || yieldAllowed
-    }
-
     /** 星河岛上点了按钮([buttonId])或卡片([buttonId] 为空):按系统登记的动作交回系统执行;送达返回真 */
     fun perform(identity: String, buttonId: String?): Boolean = actions?.perform(identity, buttonId) == true
 
@@ -284,10 +270,8 @@ object OfficialCloudSource {
                 }
             }
             actions?.retain(records.mapTo(HashSet()) { it.snapshot.key })
-            AdapterBridge.push(events, settings)
+            AdapterBridge.push(events, settings, store.aliveIdentities())
             remapClaims()
-            // 每批系统事件都核对一遍让位:决定变了按现在的改,系统在原来的对象上把开关改写回去的也盖得上
-            OfficialCloudYield.refresh()
         }.onFailure { reportFailure("synchronize", it, null) }
     }
 
@@ -297,8 +281,6 @@ object OfficialCloudSource {
         handledIdentities = set(EventBridge.KEY_HANDLED)
         spentIdentities = set(EventBridge.KEY_SPENT)
         alwaysIdentities = set(EventBridge.KEY_ALWAYS)
-        pendingIdentities = set(EventBridge.KEY_PENDING)
-        shownKinds = set(EventBridge.KEY_SHOWN_KINDS)
         islandActive = state.getBoolean(EventBridge.KEY_ACTIVE)
         yieldAllowed = state.getBoolean(EventBridge.KEY_YIELD_ALLOWED)
         remapClaims()
@@ -315,9 +297,8 @@ object OfficialCloudSource {
         val hide = native(handledIdentities)
         val spent = native(spentIdentities)
         val always = native(alwaysIdentities)
-        val decided = if (!connected) emptySet() else store.allNativeKeys() - native(pendingIdentities)
-        val changed = hide != nativeClaims || spent != spentClaims || always != alwaysClaims || decided != decidedKeys
-        nativeClaims = hide; spentClaims = spent; alwaysClaims = always; decidedKeys = decided
+        val changed = hide != nativeClaims || spent != spentClaims || always != alwaysClaims
+        nativeClaims = hide; spentClaims = spent; alwaysClaims = always
         return changed
     }
 
@@ -332,8 +313,8 @@ object OfficialCloudSource {
         reportStatus = {}
         store.clear(); reportedGaps.clear(); diagSignatures.clear()
         islandActive = false; yieldAllowed = false
-        handledIdentities = emptySet(); spentIdentities = emptySet(); alwaysIdentities = emptySet(); pendingIdentities = emptySet(); shownKinds = emptySet()
-        nativeClaims = emptySet(); spentClaims = emptySet(); alwaysClaims = emptySet(); decidedKeys = emptySet()
+        handledIdentities = emptySet(); spentIdentities = emptySet(); alwaysIdentities = emptySet()
+        nativeClaims = emptySet(); spentClaims = emptySet(); alwaysClaims = emptySet()
         OfficialCloudImages.clear()
         OfficialCloudTemplates.clear()
         OfficialCloudSystemTips.clear()

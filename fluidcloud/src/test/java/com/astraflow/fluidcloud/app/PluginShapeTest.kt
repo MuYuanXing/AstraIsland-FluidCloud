@@ -101,7 +101,7 @@ class PluginShapeTest {
         for (scope in listOf("麦克风", "录屏", "手电筒", "勿扰")) assertTrue(asMain.contains(scope))
         val access = PluginHelp.first { it.heading == "系统流体云" }.body
         assertTrue("接入开关统一控制音乐、通知与系统内容", access.contains("音乐、通知和系统实时内容") && access.contains("撤下这些内容并交还系统"))
-        assertTrue("写明隐藏不了时只显示星河岛的做法", access.contains("「不可用」") && access.contains("关闭对应服务"))
+        assertTrue("显示交接失败时只由系统显示", access.contains("对应事件交由系统显示") && access.contains("星河岛不重复显示"))
         for (section in PluginHelp) {
             assertTrue("使用说明正文以句号结尾:${section.heading}", section.body.endsWith("。"))
             assertTrue("使用说明不写重启类操作:${section.heading}", !section.body.contains("重启"))
