@@ -56,6 +56,7 @@ object OfficialCloudHook {
         val listeners: Map<CloudChange, MethodRef?>, val verified: Boolean,
         val interceptors: List<String> = emptyList(), val observers: List<String> = emptyList(),
         val renderers: List<MethodRef> = emptyList(), val refreshDisplay: MethodRef? = null,
+        val api: OfficialCloudPlatform.Api = OfficialCloudPlatform.Api.LEGACY,
     )
 
     /**
@@ -121,6 +122,14 @@ object OfficialCloudHook {
             val unresolved = methods.filterValues { it == null }.keys
             val resolvedAll = methods.mapNotNull { (change, method) -> method?.let { change to it } }.toMap()
             val resolvedOwners = resolvedAll.values.mapTo(linkedSetOf()) { it.declaringClass }
+            val rendering = scan.renderers.mapNotNull { runCatching { it.resolve(loader) }.getOrNull() }
+            val refreshing = scan.refreshDisplay?.let { runCatching { it.resolve(loader) }.getOrNull() }
+            if (scan.api == OfficialCloudPlatform.Api.C17 &&
+                (resolvedAll.keys != anchors.keys || rendering.size != 2 || refreshing == null)) {
+                unavailable(apk, "C17 event/display interfaces incomplete; legacy hooks are not installed",
+                    superseded = replaced || resolvedOwners.isNotEmpty())
+                return
+            }
             // 通知胶囊的监听方法找到几个装几个(找不到的写进日志,不再全废);别代已经挂过的方法不挂第二遍
             val resolved = resolvedAll.filterValues(::unhookedMethod)
             val listenerClasses = resolved.values.mapTo(linkedSetOf()) { it.declaringClass }
@@ -169,13 +178,11 @@ object OfficialCloudHook {
             // 服务数据入口与原生显示入口独立安装,读取成功不代表可以交接显示。
             generation.hooks += OfficialCloudReaderHooks.install(loader, interceptors, observers, manager, ::unhookedMethod)
             if (resolvedAll.isNotEmpty() || scan.renderers.isNotEmpty() || scan.refreshDisplay != null) {
-                val rendering = scan.renderers.mapNotNull { runCatching { it.resolve(loader) }.getOrNull() }
-                val refreshing = scan.refreshDisplay?.let { runCatching { it.resolve(loader) }.getOrNull() }
                 generation.hooks += OfficialCloudYield.installDisplay(loader, rendering, refreshing, ::unhookedMethod)
             }
             OfficialCloudSource.reportVisibility()
             synchronized(generations) { generations += generation }
-            com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners installed; notification capsules=${listenerClasses.isNotEmpty()} reviewed plugin=$verified on $apk")
+            com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners installed; api=${scan.api} notification capsules=${listenerClasses.isNotEmpty()} reviewed plugin=$verified on $apk")
             if (resolved.isEmpty() && !allShared) com.astraflow.fluidcloud.hook.Log.w(TAG, "notification capsules unreadable on $apk: " +
                 "listener anchors unresolved: missing=$unresolved owners=${resolvedOwners.map { it.name }}")
             else if (unresolved.isNotEmpty()) com.astraflow.fluidcloud.hook.Log.w(TAG,
@@ -252,23 +259,30 @@ object OfficialCloudHook {
      * 让位的两处按 OPPO 接口找:实现了卡片内容接口、服务名单接口的类。
      */
     private fun scan(path: String): PluginScan = DexKitBridge.create(path).use { bridge ->
-        val listeners = anchors.mapValues { (_, anchor) ->
-            bridge.findMethod { matcher { usingStrings(anchor); paramCount = 1; paramTypes = listOf("java.util.List") } }
-                .singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
-        }
+        val c17 = bridge.findClass { matcher { className = OfficialCloudPlatform.C17_ENTRY } }.isNotEmpty()
         fun implementers(api: String) = runCatching { bridge.findClass { matcher { addInterface(api) } }.map { it.name } }.getOrDefault(emptyList())
-        fun display(vararg strings: String) = bridge.findMethod {
-            matcher { usingStrings(*strings); paramCount = 1; returnType = "void" }
-        }.singleOrNull()?.takeIf { it.paramTypeNames.single() in setOf("java.util.ArrayList", "java.util.List") }
-            ?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
-        val renderers = listOfNotNull(display("CapsulesRepository", "onDataChanged, hasSystem["),
-            display("CardsRepository", "onDataChanged, size:"))
-        val refresh = bridge.findMethod {
-            matcher { usingStrings("notifyEntryDataChanged skip due to released"); paramCount = 2; returnType = "void" }
-        }.singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
-        PluginScan(listeners, verified = hash(path) == VERIFIED_PLUGIN_SHA256,
-            interceptors = implementers(OfficialCloudYield.INTERCEPTOR), observers = implementers(OfficialCloudYield.OBSERVER),
-            renderers = renderers, refreshDisplay = refresh)
+        val interceptors = implementers(OfficialCloudYield.INTERCEPTOR)
+        val observers = implementers(OfficialCloudYield.OBSERVER)
+        val verified = hash(path) == VERIFIED_PLUGIN_SHA256
+        OfficialCloudPlatform.select(c17, modern = {
+            OfficialCloudPlatform.scanC17(bridge, verified, interceptors, observers)
+        }, legacy = {
+            val listeners = anchors.mapValues { (_, anchor) ->
+                bridge.findMethod { matcher { usingStrings(anchor); paramCount = 1; paramTypes = listOf("java.util.List") } }
+                    .singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
+            }
+            fun display(vararg strings: String) = bridge.findMethod {
+                matcher { usingStrings(*strings); paramCount = 1; returnType = "void" }
+            }.singleOrNull()?.takeIf { it.paramTypeNames.single() in setOf("java.util.ArrayList", "java.util.List") }
+                ?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
+            val renderers = listOfNotNull(display("CapsulesRepository", "onDataChanged, hasSystem["),
+                display("CardsRepository", "onDataChanged, size:"))
+            val refresh = bridge.findMethod {
+                matcher { usingStrings("notifyEntryDataChanged skip due to released"); paramCount = 2; returnType = "void" }
+            }.singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
+            PluginScan(listeners, verified = verified, interceptors = interceptors, observers = observers,
+                renderers = renderers, refreshDisplay = refresh)
+        })
     }
 
     /** 检查用:等已经交给后台线程的安装做完 */
