@@ -46,6 +46,8 @@ object OfficialCloudSeedlingReader {
 
     /** 记录管理 → 它那一份。记录管理随插件释放,这里不留住它。 */
     private val owners = WeakHashMap<Any, Owner>()
+    /** 已撤销监听的记录管理不再接收晚到内容;新名单到达后才恢复。 */
+    private val retired = WeakHashMap<Any, Unit>()
     /** 编号 → 那一份(记录管理已经不在了还没撤的,下次交数据时撤掉) */
     private val byId = LinkedHashMap<String, Owner>()
     private val ownerSequence = AtomicLong()
@@ -56,7 +58,7 @@ object OfficialCloudSeedlingReader {
         { owner, revision, entries -> OfficialCloudSource.receive(owner, revision, CloudChange.REPLACE, entries, false) }
     @Volatile var drop: (Set<String>) -> Unit = { OfficialCloudSource.dropOwners(it) }
 
-    /** 服务名单送到(系统把名单交给这个显示位置的记录管理之前) */
+    /** 系统处理本次服务名单后读取其当前记录。 */
     fun onServiceList(observer: Any?, list: Any?) {
         val manager = managerOf(observer ?: return) ?: return
         val entrance = entranceOf(manager) ?: return
@@ -69,6 +71,7 @@ object OfficialCloudSeedlingReader {
         }
         val adoptions = mutableListOf<Entry>()
         synchronized(this) {
+            retired.remove(manager)
             val owner = ownerOf(manager, entrance)
             val next = LinkedHashMap<String, Entry>()
             // 记录管理手上已有的记录(挂钩装好之前就在的卡片从这里认领),只在有卡片还没有内容时才找一次
@@ -76,11 +79,10 @@ object OfficialCloudSeedlingReader {
             for (service in kept) {
                 val key = keyOf(service, user) ?: continue
                 val old = owner.entries[key]
-                // 强制重建的服务:系统换一张新卡片,旧内容不要了,等新内容送到
+                // 系统已处理本次名单:重建时只认领它当前的新记录,不沿用旧内容。
                 val rebuild = OfficialCloudReflection.call(service, "getForceRebuild") == true
                 next[key] = when {
                     old != null && !rebuild && old.ui != null -> Entry(key, user, entrance, service, old.ui, old.card, old.seedling)
-                    rebuild -> Entry(key, user, entrance, service, null, null, null)
                     else -> adopt(existing, key, user, entrance, service)?.also(adoptions::add) ?: Entry(key, user, entrance, service, null, null, null)
                 }
             }
@@ -136,13 +138,14 @@ object OfficialCloudSeedlingReader {
         return found.keys.toList()
     }
 
-    /** 卡片内容送到(系统把内容交给卡片之前) */
+    /** 系统处理卡片内容回调后,在主线程读取卡片与内容。 */
     fun onUIData(interceptor: Any?, data: Any?) {
         val located = locate(interceptor ?: return) ?: return
         val ui = OfficialCloudReflection.call(data, "getSeedlingUIData") ?: return
         val pkg = OfficialCloudReflection.text(OfficialCloudReflection.call(ui, "getDataSourcePkgName"))
         val disabled = disabled(contextOf(located.manager), pkg)
         synchronized(this) {
+            if (located.manager in retired) return
             val owner = ownerOf(located.manager, located.entrance)
             val known = owner.entries[located.key]
             // 名单里没有这件事:系统流体云插件不收这份内容(事情已经结束,或者还没轮到),这里也不收
@@ -169,7 +172,10 @@ object OfficialCloudSeedlingReader {
     /** 系统撤掉一个显示位置的名单监听(记录管理不用了):它的卡片一并结束 */
     fun onObserverGone(observer: Any?) {
         val manager = managerOf(observer ?: return) ?: return
-        val owner = synchronized(this) { owners.remove(manager)?.also { byId.remove(it.id) } } ?: return
+        val owner = synchronized(this) {
+            retired[manager] = Unit
+            owners.remove(manager)?.also { byId.remove(it.id) }
+        } ?: return
         com.astraflow.fluidcloud.hook.Log.i(TAG, "observer unregistered: ${owner.id}(${owner.entrance}) dropped=${owner.entries.size}")
         drop(setOf(owner.id))
     }
@@ -270,7 +276,7 @@ object OfficialCloudSeedlingReader {
     }
 
     fun resetForTest() {
-        synchronized(this) { owners.clear(); byId.clear() }
+        synchronized(this) { owners.clear(); byId.clear(); retired.clear() }
         synchronized(noted) { noted.clear() }
         revisions = OfficialCloudHook::nextRevision
         deliver = { owner, revision, entries -> OfficialCloudSource.receive(owner, revision, CloudChange.REPLACE, entries, false) }

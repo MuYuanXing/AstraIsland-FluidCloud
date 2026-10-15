@@ -173,14 +173,14 @@ object OfficialCloudHook {
                     } ?: error("listener hook unavailable")
                     generation.hooks += handle
                 }
+                // 同一代的读取与显示安装必须整体完成,失败时撤回本次已安装部分。
+                generation.hooks += OfficialCloudReaderHooks.install(loader, interceptors, observers, manager, ::unhookedMethod)
+                if (resolvedAll.isNotEmpty() || scan.renderers.isNotEmpty() || scan.refreshDisplay != null) {
+                    generation.hooks += OfficialCloudYield.installDisplay(loader, rendering, refreshing, ::unhookedMethod)
+                }
             } catch (failure: Throwable) {
                 generation.hooks.forEach { runCatching { it.unhook() } }
                 throw failure
-            }
-            // 服务数据入口与原生显示入口独立安装,读取成功不代表可以交接显示。
-            generation.hooks += OfficialCloudReaderHooks.install(loader, interceptors, observers, manager, ::unhookedMethod)
-            if (resolvedAll.isNotEmpty() || scan.renderers.isNotEmpty() || scan.refreshDisplay != null) {
-                generation.hooks += OfficialCloudYield.installDisplay(loader, rendering, refreshing, ::unhookedMethod)
             }
             OfficialCloudSource.reportVisibility()
             synchronized(generations) { generations += generation }

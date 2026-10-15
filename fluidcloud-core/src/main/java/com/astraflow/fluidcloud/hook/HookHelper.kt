@@ -42,12 +42,14 @@ object HookHelper {
     fun hookMethodAfter(method: Method, callback: (Chain, Any?) -> Any?): HookHandle? = hookExecutable(method, afterCallback = callback)
 
     /** 修改本次调用参数,不修改系统持有的原始数据;原方法执行失败仍由原调用方处理。 */
-    fun hookArguments(method: Method, transform: (Chain) -> Array<Any?>): HookHandle? {
+    fun hookArguments(method: Method, afterCallback: ((Chain) -> Unit)? = null, transform: (Chain) -> Array<Any?>): HookHandle? {
         val xi = xposedInterface ?: return null
         return runCatching {
             xi.hook(method).setExceptionMode(ExceptionMode.PROTECTIVE).intercept(Hooker { chain ->
                 val args = runCatching { transform(chain) }.onFailure { Logger.e(TAG, "argument hook failed", it) }.getOrNull()
-                if (args == null) chain.proceed() else chain.proceed(args)
+                val result = if (args == null) chain.proceed() else chain.proceed(args)
+                if (args != null) runCatching { afterCallback?.invoke(chain) }.onFailure { Logger.e(TAG, "argument hook completion failed", it) }
+                result
             })
         }.onFailure { Logger.e(TAG, "argument hook unavailable", it) }.getOrNull()
     }

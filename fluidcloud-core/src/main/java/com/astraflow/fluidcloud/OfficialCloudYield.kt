@@ -24,7 +24,7 @@ object OfficialCloudYield {
     @Volatile private var effective: Set<String> = emptySet()
     /** 已完成交接后结束的事件不交还系统,继续排除原生显示部分残留的同一条旧记录。 */
     private var finished: Set<String> = emptySet()
-    private class Display(val method: Method, val entry: Any) {
+    private class Display(val method: Method, val entry: Any, val consumers: Map<Method, Int>) {
         var owner = WeakReference<Any>(null)
     }
     private val displays = linkedMapOf<ClassLoader, Display>()
@@ -33,7 +33,7 @@ object OfficialCloudYield {
     private val refreshing = ThreadLocal.withInitial { false }
     private val failed = linkedSetOf<String>()
     private val noted = linkedSetOf<String>()
-    private var deliveries = 0
+    private val deliveries = hashMapOf<Method, MutableSet<Any>>()
     private var applied: Set<String>? = null
     private var refreshPosted = false
     private var testDisplay: ((Set<String>) -> Set<String>)? = null
@@ -50,18 +50,22 @@ object OfficialCloudYield {
         val handles = mutableListOf<XposedInterface.HookHandle>()
         for (method in renderers.distinct()) {
             if (!unhooked(method)) continue
-            val handle = HookHelper.hookArguments(method) { chain ->
+            val handle = HookHelper.hookArguments(method, afterCallback = { chain ->
+                if (refreshing.get() == true) chain.thisObject?.let { owner ->
+                    deliveries.getOrPut(method) { java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Any, Boolean>()) }.add(owner)
+                }
+            }) { chain ->
                 chain.thisObject?.let(::observeDisplay)
                 val input = chain.getArg(0) as? List<*> ?: error("native display list missing")
                 arrayOf(filter(input))
             }
             if (handle == null) {
                 handles.forEach(HookHelper::unhook)
-                markUnavailable(); return emptyList()
+                error("native display interceptor could not be installed: $method")
             }
             handles += handle
         }
-        synchronized(displays) { displays[loader] = Display(refresh.apply { isAccessible = true }, entry) }
+        synchronized(displays) { displays[loader] = Display(refresh.apply { isAccessible = true }, entry, renderers.groupingBy { it }.eachCount()) }
         synchronized(observedHolders) { observedHolders.keys.toList() }.forEach(::observeDisplay)
         applied = null
         updateStatus(Status.PENDING)
@@ -92,7 +96,6 @@ object OfficialCloudYield {
     fun filter(input: List<*>): ArrayList<Any?> {
         val output = ArrayList<Any?>(input.size)
         val available = synchronized(displays) { displays.isNotEmpty() } || testDisplay != null
-        if (refreshing.get() == true) deliveries++
         for (model in input) {
             if (model == null || !available) { output += model; continue }
             val key = OfficialCloudReflection.nativeKey(model)
@@ -158,19 +161,20 @@ object OfficialCloudYield {
         if (targets.any { it.owner.get() == null }) {
             confirmed = emptySet(); effective = finished; updateStatus(Status.PENDING); return
         }
-        deliveries = 0
         synchronized(failed) { failed.clear() }
         refreshing.set(true)
         fun dispatch(): Boolean =
             targets.map { target ->
                 runCatching {
-                    val before = deliveries
+                    deliveries.clear()
                     val owner = target.owner.get() ?: error("native display owner not ready")
                     target.method.invoke(owner, target.entry, false)
-                    check(deliveries - before >= 2) { "native capsule and card displays have not both delivered" }
+                    check(target.consumers.all { (method, count) -> (deliveries[method]?.size ?: 0) >= count }) {
+                        "native capsule and card consumers have not both completed"
+                    }
                 }.onFailure { Log.e("OfficialCloud", "native display handover failed", it) }.isSuccess
             }.all { it }
-        val success = try { dispatch() } finally { refreshing.set(false) }
+        val success = try { dispatch() } finally { refreshing.set(false); deliveries.clear() }
         if (success) {
             effective = target - synchronized(failed) { failed.toSet() }
             confirmed = desired.intersect(effective)
@@ -184,7 +188,7 @@ object OfficialCloudYield {
         if (effective != target) {
             // 未完成交接的在途事件交还系统;已结束的旧事件不恢复显示。
             refreshing.set(true)
-            try { dispatch() } finally { refreshing.set(false) }
+            try { dispatch() } finally { refreshing.set(false); deliveries.clear() }
         }
     }
 
@@ -227,6 +231,6 @@ object OfficialCloudYield {
         synchronized(observedHolders) { observedHolders.clear() }
         synchronized(noted) { noted.clear() }
         status = Status.UNKNOWN; confirmed = emptySet(); effective = emptySet(); finished = emptySet(); applied = null; testDisplay = null
-        refreshPosted = false; deliveries = 0
+        refreshPosted = false; deliveries.clear()
     }
 }
