@@ -52,8 +52,31 @@ object OfficialCloudReflection {
 
     fun fields(type: Class<*>): List<Field> = fieldLists.get(type)
 
-    fun fieldOfType(target: Any, name: String): Any? = fields(target.javaClass)
-        .firstOrNull { it.type.name == name }?.let { field -> runCatching { field.isAccessible = true; field.get(target) }.getOrNull() }
+    private val typeNames = object : ClassValue<Set<String>>() {
+        override fun computeValue(type: Class<*>): Set<String> = buildSet {
+            fun addType(current: Class<*>) {
+                if (!add(current.name)) return
+                current.superclass?.let(::addType)
+                current.interfaces.forEach(::addType)
+            }
+            addType(type)
+        }
+    }
+
+    private fun value(target: Any, field: Field): Any? = runCatching { field.isAccessible = true; field.get(target) }.getOrNull()
+
+    /** 先使用明确的字段类型;系统合并对象后使用实际对象的公开类型,有歧义时不认领。 */
+    fun fieldOfType(target: Any, name: String): Any? {
+        val fields = fields(target.javaClass)
+        fields.firstOrNull { it.type.name == name }?.let { value(target, it) }?.let { return it }
+        val found = java.util.IdentityHashMap<Any, Unit>()
+        for (field in fields) {
+            if (field.type != Any::class.java && name !in typeNames.get(field.type)) continue
+            val item = value(target, field) ?: continue
+            if (name in typeNames.get(item.javaClass)) found[item] = Unit
+        }
+        return found.keys.singleOrNull()
+    }
 
     /**
      * 系统流体云的一条记录:系统服务卡片来自新读法(OfficialCloudSeedlingReader.Entry,只读 OPPO 接口);
@@ -61,7 +84,7 @@ object OfficialCloudReflection {
      */
     fun isOfficial(model: Any): Boolean = if (model is OfficialCloudSeedlingReader.Entry) true else when (val type = call(model, "getSourceType")?.toString()) {
         "SOURCE_SEEDLING" -> false
-        "SOURCE_COMMON" -> fields(model.javaClass).any { it.type == android.service.notification.StatusBarNotification::class.java }
+        "SOURCE_COMMON" -> fieldOfType(model, "android.service.notification.StatusBarNotification") is android.service.notification.StatusBarNotification
         else -> { noteOtherType(model, type); false } // 标准通知继续由岛现有通知来源接收。
     }
 
@@ -95,8 +118,10 @@ object OfficialCloudReflection {
     fun isCommon(model: Any): Boolean = call(model, "getSourceType")?.toString() == "SOURCE_COMMON"
 
     /** 这条记录在哪个显示位置(系统流体云插件自己的 ENTRY_STATUS_BAR、ENTRY_NOTIFICATION、ENTRY_AOD);读不到时为 null。 */
-    fun entranceName(model: Any): String? = fields(model.javaClass).filter { it.type.isEnum }.firstNotNullOfOrNull { field ->
-        runCatching { field.isAccessible = true; (field.get(model) as? Enum<*>)?.name }.getOrNull()?.takeIf { it.startsWith("ENTRY_") }
+    fun entranceName(model: Any): String? {
+        fun entrance(field: Field) = (value(model, field) as? Enum<*>)?.name?.takeIf { it.startsWith("ENTRY_") }
+        fields(model.javaClass).filter { it.type.isEnum }.firstNotNullOfOrNull(::entrance)?.let { return it }
+        return fields(model.javaClass).filter { it.type == Any::class.java }.mapNotNull(::entrance).distinct().singleOrNull()
     }
 
     /** 显示位置的编号,与系统「在哪些位置显示」开关里写的一致:状态栏 8、通知栏 16、息屏 4。 */

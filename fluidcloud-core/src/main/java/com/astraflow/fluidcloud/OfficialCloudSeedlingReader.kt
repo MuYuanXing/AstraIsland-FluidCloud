@@ -116,7 +116,7 @@ object OfficialCloudSeedlingReader {
     private fun modelsOf(manager: Any): List<Any> {
         val found = java.util.IdentityHashMap<Any, Unit>()
         fun collect(items: Iterable<*>) = items.take(MAX_SERVICES).forEach { item ->
-            if (item != null && OfficialCloudReflection.fields(item.javaClass).any { it.type.name == OfficialCloudReflection.SERVICE_INFO }) found[item] = Unit
+            if (item != null && OfficialCloudReflection.fieldOfType(item, OfficialCloudReflection.SERVICE_INFO) != null) found[item] = Unit
         }
         fun visit(value: Any?, depth: Int) {
             when (value) {
@@ -216,13 +216,13 @@ object OfficialCloudSeedlingReader {
     /** 带着显示位置(OPPO 接口里的 Entrance)的那个对象:名单监听者、内容接收对象身上都有它 */
     private fun managerOf(holder: Any): Any? = OfficialCloudReflection.fields(holder.javaClass).firstNotNullOfOrNull { field ->
         runCatching { field.isAccessible = true; field.get(holder) }.getOrNull()
-            ?.takeIf { value -> OfficialCloudReflection.fields(value.javaClass).any { it.type.name == ENTRANCE } }
+            ?.takeIf { value -> OfficialCloudReflection.fieldOfType(value, ENTRANCE) != null }
     }
 
     /** 内容接收对象身上那条记录:带服务信息(OPPO 接口里的 ServiceInfo)的那个对象 */
     private fun modelOf(interceptor: Any): Any? = OfficialCloudReflection.fields(interceptor.javaClass).firstNotNullOfOrNull { field ->
         runCatching { field.isAccessible = true; field.get(interceptor) }.getOrNull()
-            ?.takeIf { value -> OfficialCloudReflection.fields(value.javaClass).any { it.type.name == OfficialCloudReflection.SERVICE_INFO } }
+            ?.takeIf { value -> OfficialCloudReflection.fieldOfType(value, OfficialCloudReflection.SERVICE_INFO) != null }
     }
 
     /** 显示位置:状态栏、通知栏(OPPO 接口里写的编号 8、16);别的位置不读 */

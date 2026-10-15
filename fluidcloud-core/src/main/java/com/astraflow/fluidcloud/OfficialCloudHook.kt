@@ -125,15 +125,17 @@ object OfficialCloudHook {
             val rendering = scan.renderers.mapNotNull { runCatching { it.resolve(loader) }.getOrNull() }
             val refreshing = scan.refreshDisplay?.let { runCatching { it.resolve(loader) }.getOrNull() }
             if (scan.api == OfficialCloudPlatform.Api.C17 &&
-                (resolvedAll.keys != anchors.keys || rendering.size != 2 || refreshing == null)) {
-                unavailable(apk, "C17 event/display interfaces incomplete; legacy hooks are not installed",
+                (rendering.size != 2 || refreshing == null)) {
+                unavailable(apk, "C17 display interfaces incomplete; legacy hooks are not installed",
                     superseded = replaced || resolvedOwners.isNotEmpty())
                 return
             }
-            // 通知胶囊的监听方法找到几个装几个(找不到的写进日志,不再全废);别代已经挂过的方法不挂第二遍
-            val resolved = resolvedAll.filterValues(::unhookedMethod)
+            // C17 的通知接收必须有完整生命周期;缺失只停通知接收,不连带停掉公共接口读取的系统服务。
+            val completeNotifications = scan.api != OfficialCloudPlatform.Api.C17 || resolvedAll.keys == anchors.keys
+            val resolved = if (completeNotifications) resolvedAll.filterValues(::unhookedMethod) else emptyMap()
             val listenerClasses = resolved.values.mapTo(linkedSetOf()) { it.declaringClass }
-            val allShared = resolvedAll.isNotEmpty() && resolved.isEmpty()
+            val allShared = (completeNotifications && resolvedAll.isNotEmpty() && resolved.isEmpty()) ||
+                (scan.api == OfficialCloudPlatform.Api.C17 && rendering.isNotEmpty() && rendering.all { !unhookedMethod(it) })
             // 系统服务卡片的挂点(OPPO 接口):这个类加载器里换得出、还没有哪一代挂过的那几个类
             val interceptors = scan.interceptors.filter { unhooked(loader, it) }
             val observers = scan.observers.filter { unhooked(loader, it) }
