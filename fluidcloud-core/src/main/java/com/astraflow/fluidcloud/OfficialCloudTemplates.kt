@@ -155,6 +155,7 @@ class CloudTemplate(
         symbol: Boolean = true,
         playing: Boolean = true,
         loopStartFrame: Int? = null,
+        loop: Boolean = true,
     ): CloudImage? {
         val file = image(src, data) ?: return null
         val key = file.absolutePath
@@ -163,8 +164,8 @@ class CloudTemplate(
             CloudImage("template:$key", bytes = bytes, symbol = true, animated = file.name.endsWith(".json"))
                 .also { picture -> synchronized(pictures) { if (pictures.size >= 16) pictures.clear(); pictures[key] = picture } }
         }
-        return if (cached.symbol == symbol && cached.playing == playing && cached.loopStartFrame == loopStartFrame) cached
-            else cached.copy(symbol = symbol, playing = playing, loopStartFrame = loopStartFrame)
+        return if (cached.symbol == symbol && cached.playing == playing && cached.loopStartFrame == loopStartFrame && cached.loop == loop) cached
+            else cached.copy(symbol = symbol, playing = playing, loopStartFrame = loopStartFrame, loop = loop)
     }
 
     /**
@@ -234,7 +235,7 @@ class CloudTemplate(
         private val RENDER_ATTRS = setOf("text", "src", "percent", "step", "currentStep", "chronometer", "count-down-time", "countDownTime", "node-labels",
             "nodeLabels", "voiceLabel", "min", "max", "alt", "autoplay", "shapeStyle", "color", "alarmTime", "category", "fontSize", "gradientColors",
             "type", "icon", "iconOn", "iconOff", "bgColor", "bgImage", "checked", "currentNodeColor", "textColor", "scaleType", "width",
-            "progressType", "progressIcon", "showProgress", "loopStartFrame")
+            "progressType", "progressIcon", "showProgress", "loopStartFrame", "loop")
 
         /** 模板读不到时,数据里还没翻译的代号一律当空,不把代号显示出来。 */
         fun stripKeys(data: Map<String, String>): Map<String, String> = data.mapValues { (_, value) -> if (KEY.matches(value.trim())) "" else value }

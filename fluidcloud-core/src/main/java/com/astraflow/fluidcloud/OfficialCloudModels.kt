@@ -19,6 +19,8 @@ data class CloudNode(
 data class CloudImage(
     val key: String, val bytes: ByteArray? = null, val bitmap: Bitmap? = null, val platform: android.graphics.drawable.Icon? = null,
     val symbol: Boolean = false, val animated: Boolean = false, val playing: Boolean = true,
+    /** 说明文件写明只播一遍(loop 为 false,完成对勾这类)时为假:播完停在最后一帧;没写的照旧循环 */
+    val loop: Boolean = true,
     /**
      * 放在卡片所属应用自己的共享位置的图(content:// 地址,例如外卖的菜品图):在后台读,读好之前没有图;
      * 只读 [owners] 这几个应用自己的共享位置(现行规则「展开卡片总表」)。

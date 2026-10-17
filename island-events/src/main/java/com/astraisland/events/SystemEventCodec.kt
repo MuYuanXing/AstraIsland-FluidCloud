@@ -300,6 +300,7 @@ object SystemEventCodec {
             is EventImage.Animation -> {
                 putString("type", "animation"); putString("identity", image.identity); putBoolean("playing", image.playing); putByteArray("json", image.json)
                 image.loopStartFrame?.let { putInt("loopStartFrame", it) }
+                if (!image.loop) putBoolean("loop", false)
             }
             is EventImage.Moving -> { putString("type", "moving"); putString("identity", image.identity); putByteArray("bytes", image.bytes) }
             is EventImage.Missing -> putString("type", "missing")
@@ -313,7 +314,8 @@ object SystemEventCodec {
             "picture" -> b.getParcelable("bitmap", Bitmap::class.java)?.let { EventImage.Picture(it, b.getString("identity"), symbol, shared, substitute) } ?: missing()
             "platform" -> b.getParcelable("icon", Icon::class.java)?.let { EventImage.Platform(it, symbol, shared, substitute) } ?: missing()
             "animation" -> b.getString("identity")?.let { id -> b.getByteArray("json")?.let {
-                EventImage.Animation(id, b.getBoolean("playing"), it, symbol, shared, substitute, b.optInt("loopStartFrame"))
+                EventImage.Animation(id, b.getBoolean("playing"), it, symbol, shared, substitute, b.optInt("loopStartFrame"),
+                    loop = b.optBoolean("loop") ?: true)
             } } ?: missing()
             "moving" -> b.getString("identity")?.let { id -> b.getByteArray("bytes")?.let { EventImage.Moving(id, it, symbol, shared, substitute) } } ?: missing()
             else -> missing()

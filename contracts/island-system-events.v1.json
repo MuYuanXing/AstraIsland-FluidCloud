@@ -194,7 +194,7 @@
       "types": [
         { "id": "picture", "meaning": "位图;identity 是像素或文件内容的指纹,同一张图同一个" },
         { "id": "platform", "meaning": "系统图标对象(通知里的图标)" },
-        { "id": "animation", "meaning": "会动的图标(动画文件);playing 为假时停在第一帧" },
+        { "id": "animation", "meaning": "会动的图标(动画文件);playing 为假时停在第一帧,loop 为假时只播一遍停在最后一帧" },
         { "id": "moving", "meaning": "会动的图片(动图 WebP)" },
         { "id": "missing", "meaning": "那里放了图,但此刻没有可画的:共享位置里的照片还在后台读(读好后再送一版),或者读不出" }
       ],

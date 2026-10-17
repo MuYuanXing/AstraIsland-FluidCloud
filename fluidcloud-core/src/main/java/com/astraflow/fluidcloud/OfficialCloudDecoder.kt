@@ -166,10 +166,12 @@ object OfficialCloudDecoder {
             val symbol = props["shapeStyle"] != "circle"
             val src = props["src"]?.trim()?.takeIf { it.isNotEmpty() }
             val alt = props["alt"]?.trim()?.takeIf { it.isNotEmpty() && it != src }
+            // 说明文件写明只播一遍的(loop 为 false,完成对勾这类)记下来:播完停在最后一帧,不循环
+            val loop = props["loop"]?.let { OfficialCloudExpr.truthy(it) } ?: true
             return listOfNotNull(src, alt).firstNotNullOfOrNull { ref ->
                 val found = OfficialCloudSharedImages.reference(ref, owners, symbol = props["shapeStyle"] == "origin")
                     ?: (snapshot.images[ref] ?: snapshot.images.values.firstOrNull { it.key == ref })?.copy(symbol = symbol)
-                    ?: template?.picture(ref, data, symbol = symbol, playing = playing, loopStartFrame = loopStartFrame)
+                    ?: template?.picture(ref, data, symbol = symbol, playing = playing, loopStartFrame = loopStartFrame, loop = loop)
                 if (found != null && ref == alt) found.copy(substitute = true) else found
             }
         }

@@ -302,9 +302,10 @@ sealed interface EventImage {
     class Platform(val icon: Icon, override val symbol: Boolean = false,
         override val appShared: Boolean = false, override val substitute: Boolean = false) : EventImage
 
-    /** 会动的图标(动画文件 [json],UTF-8);[playing] 为假时停在第一帧 */
+    /** 会动的图标(动画文件 [json],UTF-8);[playing] 为假时停在第一帧;[loop] 为假时播完一遍停在最后一帧(官方的完成对勾这类)。 */
     class Animation(val identity: String, val playing: Boolean, val json: ByteArray, override val symbol: Boolean = true,
-        override val appShared: Boolean = false, override val substitute: Boolean = false, val loopStartFrame: Int? = null) : EventImage
+        override val appShared: Boolean = false, override val substitute: Boolean = false, val loopStartFrame: Int? = null,
+        val loop: Boolean = true) : EventImage
 
     /** 会动的图片(动图 WebP 的内容 [bytes]) */
     class Moving(val identity: String, val bytes: ByteArray, override val symbol: Boolean = false,
