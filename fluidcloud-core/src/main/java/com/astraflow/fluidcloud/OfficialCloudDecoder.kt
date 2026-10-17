@@ -166,8 +166,9 @@ object OfficialCloudDecoder {
             val symbol = props["shapeStyle"] != "circle"
             val src = props["src"]?.trim()?.takeIf { it.isNotEmpty() }
             val alt = props["alt"]?.trim()?.takeIf { it.isNotEmpty() && it != src }
-            // 说明文件写明只播一遍的(loop 为 false,完成对勾这类)记下来:播完停在最后一帧,不循环
-            val loop = props["loop"]?.let { OfficialCloudExpr.truthy(it) } ?: true
+            // 说明文件写明循环播放的(loop 为 true)才循环播放;未写明、loop 为 false 或 "1"(只播一遍)以及手动触发(manuallyPlay)的播完停在最后一帧,不无限循环闪烁
+            val loop = if (props["manuallyPlay"] == "true") false
+                else props["loop"]?.let { OfficialCloudExpr.truthy(it) && it != "1" } ?: false
             return listOfNotNull(src, alt).firstNotNullOfOrNull { ref ->
                 val found = OfficialCloudSharedImages.reference(ref, owners, symbol = props["shapeStyle"] == "origin")
                     ?: (snapshot.images[ref] ?: snapshot.images.values.firstOrNull { it.key == ref })?.copy(symbol = symbol)
