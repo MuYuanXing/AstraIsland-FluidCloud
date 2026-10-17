@@ -27,7 +27,12 @@ data class CloudImage(
     val owners: Set<String> = emptySet(),
     /** 说明文件在数据没给图时写的替代图(alt),例如外卖卡片的外卖袋图 */
     val substitute: Boolean = false,
+    /** Lottie 动画循环时返回的模板原始帧。 */
+    val loopStartFrame: Int? = null,
 )
+
+/** 从系统复合内容中读出的文字明细。 */
+data class CloudFact(val label: String, val value: String)
 
 /**
  * 计时。[countdown] 为真时 [baseMs] 是结束时刻,否则是起点;[elapsedClock] 为真时按开机时钟,否则按墙上时钟。
@@ -253,6 +258,8 @@ data class CloudContent(
     /** 官方铺在展开卡片上的底色(渐变取最浓的颜色)和底图;星河岛不铺,只让卡片上沿的光边带一点这个颜色 */
     val backgroundColor: Int? = null,
     val backgroundImage: CloudImage? = null,
+    /** 从官方复合控件中读出的交通站点、到站信息和参数明细。 */
+    val facts: List<CloudFact> = emptyList(),
 )
 
 enum class CloudChange { REPLACE, POST, REMOVE }

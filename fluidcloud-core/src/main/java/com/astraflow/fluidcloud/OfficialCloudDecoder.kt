@@ -7,6 +7,8 @@ import android.widget.Chronometer
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
+import org.json.JSONArray
+import org.json.JSONObject
 import java.lang.ref.WeakReference
 import java.time.Instant
 import java.time.LocalDateTime
@@ -134,6 +136,7 @@ object OfficialCloudDecoder {
         var titleMark: CloudImage? = null
         var spinner: CloudImage? = null
         var spinnerInner: CloudImage? = null
+        val facts = mutableListOf<CloudFact>()
         // 系统胶囊左右两边各放了什么、什么颜色,照说明文件的先后(现行规则「系统事件接入」)
         val capsuleLeading = mutableListOf<CapsulePart>()
         val capsuleTrailing = mutableListOf<CapsulePart>()
@@ -154,20 +157,26 @@ object OfficialCloudDecoder {
         // 说明文件放的图标按系统符号画(写明裁成圆形的头像除外);读不到时用它写的替代图(alt),并标明是替代图。
         // 数据给的是卡片所属应用共享位置里的图(例如外卖的菜品图)时按照片记下,后台读好再显示(现行规则「展开卡片总表」)
         val owners = setOf(snapshot.packageName, snapshot.hostPackage).filter { it.isNotBlank() }.toSet()
-        fun image(props: Map<String, String>, data: Map<String, String>, playing: Boolean = true): CloudImage? {
+        fun image(
+            props: Map<String, String>,
+            data: Map<String, String>,
+            playing: Boolean = true,
+            loopStartFrame: Int? = null,
+        ): CloudImage? {
             val symbol = props["shapeStyle"] != "circle"
             val src = props["src"]?.trim()?.takeIf { it.isNotEmpty() }
             val alt = props["alt"]?.trim()?.takeIf { it.isNotEmpty() && it != src }
             return listOfNotNull(src, alt).firstNotNullOfOrNull { ref ->
                 val found = OfficialCloudSharedImages.reference(ref, owners, symbol = props["shapeStyle"] == "origin")
                     ?: (snapshot.images[ref] ?: snapshot.images.values.firstOrNull { it.key == ref })?.copy(symbol = symbol)
-                    ?: template?.picture(ref, data, symbol = symbol, playing = playing)
+                    ?: template?.picture(ref, data, symbol = symbol, playing = playing, loopStartFrame = loopStartFrame)
                 if (found != null && ref == alt) found.copy(substitute = true) else found
             }
         }
         // 说明文件自带的会动图标:按 autoplay 决定播不播(现行规则「系统事件接入」)
         fun picture(node: CloudNode): CloudImage? = if (node.type == "lottie") {
-            image(node.props, snapshot.data, node.props["autoplay"]?.let(OfficialCloudExpr::truthy) ?: true)
+            image(node.props, snapshot.data, node.props["autoplay"]?.let(OfficialCloudExpr::truthy) ?: true,
+                node.props["loopStartFrame"]?.trim()?.toIntOrNull()?.coerceAtLeast(0))
                 ?.takeIf { it.animated || it.bytes != null || it.bitmap != null }
         } else image(node.props, snapshot.data)
         val ringInner = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<CloudNode, Boolean>())
@@ -265,12 +274,18 @@ object OfficialCloudDecoder {
                         spinnerInner = node.children.firstOrNull { it.type == "image" || it.type == "lottie" }?.also(ringInner::add)?.let(::picture)
                     }
                 } else {
-                // 带上下限的小部件是进度环(例如录音保存进度):数值不当正文
+                // 带上下限的小部件是进度环;部分新版模板只提供百分比和显隐标记。
                     val value = text.toFloatOrNull()
                     val min = props["min"]?.toFloatOrNull() ?: 0f
                     val max = props["max"]?.toFloatOrNull()
-                    if (value != null && max != null && max > min && value.isFinite()) {
-                        val read = CloudProgress(((value - min) / (max - min)).coerceIn(0f, 1f))
+                    val fraction = when {
+                        value == null || !value.isFinite() -> null
+                        max != null && max.isFinite() && max > min -> ((value - min) / (max - min)).coerceIn(0f, 1f)
+                        (props["showProgress"]?.let(OfficialCloudExpr::truthy) == true || small && right) && value in 0f..100f -> value / 100f
+                        else -> null
+                    }
+                    if (fraction != null) {
+                        val read = CloudProgress(fraction)
                         if (small) progress = read
                         if (small && right) trailingProgress = read
                         // 进度环中间的图(车辆充电的闪电、生成完成的对勾)是进度环的一部分,不另算一张图
@@ -336,6 +351,14 @@ object OfficialCloudDecoder {
                     }
                 }
                 "spectrum" -> Unit // 装饰用的声波条不迁入岛；来源图标负责身份显示。
+                "compound" -> {
+                    val parsed = OfficialCloudCompound.read(text)
+                    if (parsed == null) gaps += "node:compound"
+                    else {
+                        if (facts.size + parsed.size > OfficialCloudCompound.MAX_FACTS) gaps += "node:compound-limit"
+                        facts += parsed.take((OfficialCloudCompound.MAX_FACTS - facts.size).coerceAtLeast(0))
+                    }
+                }
                 else -> if (node.type !in containers) {
                     // 未认识的复合控件可能携带机器数据，不把原始对象文本放进用户卡片。
                     if (text.isNotBlank() && !text.startsWith('{') && !text.startsWith('[')) expanded += text
@@ -367,8 +390,9 @@ object OfficialCloudDecoder {
         val compactText = compact.joinToString(" ").ifBlank { description.ifBlank { title } }.take(2048)
         if (title.isBlank() && body.isBlank() && compactText.isBlank() && progress == null && timer == null) return null
         // 卡片上放不放得下全部按钮由星河岛按自己的卡片判断(放不下时同一件事的通知卡在岛上就留通知卡)
-        val hasExpanded = (flat.any { it.node.type == "expanded" } && flat.any { !it.compact && it.node.type in setOf("text", "image", "progress", "button") }) ||
-            (native.expandedAvailable && (native.texts.isNotEmpty() || native.hero != null || native.progress != null || native.timer != null))
+        val hasExpanded = (flat.any { it.node.type == "expanded" } && flat.any { !it.compact && it.node.type in setOf("text", "image", "progress", "widget", "button", "compound") }) ||
+            (native.expandedAvailable && (native.texts.isNotEmpty() || native.hero != null || native.progress != null || native.timer != null)) ||
+            facts.isNotEmpty()
         if (!hasExpanded) gaps += "expanded-unavailable"
         if (root == null && !native.expandedAvailable) gaps += "summary-only"
         val cardAction = template?.let { it.action(it.cardClick, snapshot.data) }
@@ -383,7 +407,7 @@ object OfficialCloudDecoder {
                 absent = snapshot.root == null && root != null && flat.none { it.node.type == "compact" }),
             texts = officialTexts, centerLayout = centerLayout, ring = ring,
             tags = tags.filterValues { it.icon != null || it.text != null }.map { (block, it) -> CloudTag(it.icon, it.text, block) }, titleMark = titleMark, spinner = spinner, spinnerInner = spinnerInner,
-            buttonIcons = buttonIcons, headerImage = headerImages.firstOrNull(), largeImage = largeImage,
+            buttonIcons = buttonIcons, facts = facts, headerImage = headerImages.firstOrNull(), largeImage = largeImage,
             backgroundColor = expandedProps?.get("bgColor")?.let { raw -> OfficialCloudColor.strongest(raw, template?.gradient(raw) ?: OfficialCloudColor.gradient(raw))
                 ?: template?.color(raw) },
             backgroundImage = expandedProps?.get("bgImage")?.trim()?.takeIf { it.isNotEmpty() }?.let { image(mapOf("src" to it), snapshot.data) })

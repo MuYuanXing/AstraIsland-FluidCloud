@@ -7,6 +7,7 @@ import com.astraisland.events.CardLayout
 import com.astraisland.events.EventButton
 import com.astraisland.events.EventCapsule
 import com.astraisland.events.EventCard
+import com.astraisland.events.EventFact
 import com.astraisland.events.EventImage
 import com.astraisland.events.EventKind
 import com.astraisland.events.EventProgress
@@ -141,6 +142,7 @@ object OfficialCloudTranslator {
             backgroundColor = content.backgroundColor,
             backgroundImage = pictures[content.backgroundImage],
             lampColor = lampColor(content.levelImages[NAVIGATION_LAMP] ?: content.trailingImage),
+            facts = content.facts.map { EventFact(it.label, it.value) },
         )
     }
 

@@ -3,7 +3,7 @@
   "description": "星河岛系统事件标准清单:各家手机系统的实时提示接进星河岛时,接入件把系统的值翻译成这里的说法,摆放只由星河岛按这份清单决定。每家系统一份对照表(island-system-events.<厂商>.v1.json),写明它的值对应这里的哪一项。规范见 docs/design/system-event-intake.md;校验:node tools/contracts/validate-island-system-events.mjs(逐项核对编码里的键名与本清单一致)。",
   "codec": {
     "version": 1,
-    "description": "接入件与星河岛在同一个进程里交换,两边的类互不相认,只交换系统自带类型做成的包裹(Bundle、列表、位图、系统图标、字节);键名就是本清单里的编号。包裹不跨进程传,位图与图标按对象放进去;同一张图在一批里只编一次。版本不一样时不交换。代码在 island-events 模块(SystemEvent、SystemEventCodec),星流与接入件各带一份。"
+    "description": "接入件与星河岛在同一个进程里交换,两边的类互不相认,只交换系统自带类型做成的包裹(Bundle、列表、位图、系统图标、字节);键名就是本清单里的编号。包裹不跨进程传,位图与图标按对象放进去;同一张图在一批里只编一次。版本不一样时不交换。代码在 island-events 模块(SystemEvent、SystemEventCodec),星流与接入件各带一份。新增字段是往后兼容的增量:旧的一端忽略不认识的键;新增字段不升版本,改已有键的含义或删键才升。"
   },
   "event": {
     "description": "每件事都带的内容",
@@ -116,8 +116,16 @@
       { "id": "largeImage", "type": "image", "meaning": "放在卡片底部的大图或动画" },
       { "id": "backgroundColor", "type": "color", "meaning": "系统铺在卡片上的颜色(渐变取最浓的);星河岛不铺,只给卡片上沿的光边取色" },
       { "id": "backgroundImage", "type": "image", "meaning": "系统铺在卡片上的底图;用法同上" },
-      { "id": "lampColor", "type": "enum", "values": ["red", "yellow", "green"], "meaning": "导航到路口时那盏红绿灯的颜色;认不出时不填" }
+      { "id": "lampColor", "type": "enum", "values": ["red", "yellow", "green"], "meaning": "导航到路口时那盏红绿灯的颜色;认不出时不填" },
+      { "id": "facts", "type": "details", "meaning": "系统复合内容里的明细,按顺序交给星河岛现有的并列明细排法" }
     ],
+    "fact": {
+      "description": "系统复合内容里的一项明细",
+      "fields": [
+        { "id": "label", "type": "text", "meaning": "明细名称" },
+        { "id": "value", "type": "text", "meaning": "系统提供的原始明细内容" }
+      ]
+    },
     "textRoles": [
       { "id": "header", "meaning": "卡片顶部那一行的字(服务名这类)" },
       { "id": "core", "meaning": "最显眼的那句(核心信息)" },

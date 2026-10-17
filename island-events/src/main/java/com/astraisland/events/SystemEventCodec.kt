@@ -12,7 +12,7 @@ import java.util.IdentityHashMap
  * 认不出的种类按 unlisted 解,认不出的其它值当没填(清单:认不出时是 unlisted;没有的值不填)。
  */
 object SystemEventCodec {
-    /** 编码的版本;两边不一样时不交换(见对接约定) */
+    /** 编码的版本;两边不一样时不交换(见对接约定)。新增字段都是往后兼容的增量:旧的一端忽略不认识的键,不为此升版本。 */
     const val VERSION = 1
 
     fun encode(events: List<SystemEvent>): Bundle {
@@ -165,6 +165,9 @@ object SystemEventCodec {
         c.backgroundColor?.let { putInt("backgroundColor", it) }
         images.put(this, "backgroundImage", c.backgroundImage)
         c.lampColor?.let { putString("lampColor", it.id) }
+        putParcelableArrayList("facts", ArrayList(c.facts.map { fact ->
+            Bundle().apply { putString("label", fact.label); putString("value", fact.value) }
+        }))
     }
 
     private fun decodeCard(b: Bundle, images: List<EventImage>): EventCard {
@@ -213,6 +216,11 @@ object SystemEventCodec {
             backgroundColor = b.optInt("backgroundColor"),
             backgroundImage = image(b, "backgroundImage"),
             lampColor = LampColor.of(b.getString("lampColor")),
+            facts = b.list("facts").mapNotNull { fact ->
+                val label = fact.getString("label")?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                val value = fact.getString("value")?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                EventFact(label, value)
+            },
         )
     }
 
@@ -289,7 +297,10 @@ object SystemEventCodec {
         when (image) {
             is EventImage.Picture -> { putString("type", "picture"); putParcelable("bitmap", image.bitmap); putString("identity", image.identity) }
             is EventImage.Platform -> { putString("type", "platform"); putParcelable("icon", image.icon) }
-            is EventImage.Animation -> { putString("type", "animation"); putString("identity", image.identity); putBoolean("playing", image.playing); putByteArray("json", image.json) }
+            is EventImage.Animation -> {
+                putString("type", "animation"); putString("identity", image.identity); putBoolean("playing", image.playing); putByteArray("json", image.json)
+                image.loopStartFrame?.let { putInt("loopStartFrame", it) }
+            }
             is EventImage.Moving -> { putString("type", "moving"); putString("identity", image.identity); putByteArray("bytes", image.bytes) }
             is EventImage.Missing -> putString("type", "missing")
         }
@@ -301,7 +312,9 @@ object SystemEventCodec {
         return when (b.getString("type")) {
             "picture" -> b.getParcelable("bitmap", Bitmap::class.java)?.let { EventImage.Picture(it, b.getString("identity"), symbol, shared, substitute) } ?: missing()
             "platform" -> b.getParcelable("icon", Icon::class.java)?.let { EventImage.Platform(it, symbol, shared, substitute) } ?: missing()
-            "animation" -> b.getString("identity")?.let { id -> b.getByteArray("json")?.let { EventImage.Animation(id, b.getBoolean("playing"), it, symbol, shared, substitute) } } ?: missing()
+            "animation" -> b.getString("identity")?.let { id -> b.getByteArray("json")?.let {
+                EventImage.Animation(id, b.getBoolean("playing"), it, symbol, shared, substitute, b.optInt("loopStartFrame"))
+            } } ?: missing()
             "moving" -> b.getString("identity")?.let { id -> b.getByteArray("bytes")?.let { EventImage.Moving(id, it, symbol, shared, substitute) } } ?: missing()
             else -> missing()
         }

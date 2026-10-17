@@ -202,7 +202,12 @@ data class EventCard(
     val backgroundImage: EventImage? = null,
     /** 导航到路口时那盏红绿灯的颜色;认不出时为空 */
     val lampColor: LampColor? = null,
+    /** 从系统复合控件读出的文字明细，使用星河岛现有的并列明细排法。 */
+    val facts: List<EventFact> = emptyList(),
 )
+
+/** 一项系统卡片明细的原始文字。 */
+data class EventFact(val label: String, val value: String)
 
 /** 系统给卡片中间那一块标的排法:普通、取码、取件码、对称(比分)、引导 */
 enum class CardLayout(val id: String) {
@@ -299,7 +304,7 @@ sealed interface EventImage {
 
     /** 会动的图标(动画文件 [json],UTF-8);[playing] 为假时停在第一帧 */
     class Animation(val identity: String, val playing: Boolean, val json: ByteArray, override val symbol: Boolean = true,
-        override val appShared: Boolean = false, override val substitute: Boolean = false) : EventImage
+        override val appShared: Boolean = false, override val substitute: Boolean = false, val loopStartFrame: Int? = null) : EventImage
 
     /** 会动的图片(动图 WebP 的内容 [bytes]) */
     class Moving(val identity: String, val bytes: ByteArray, override val symbol: Boolean = false,

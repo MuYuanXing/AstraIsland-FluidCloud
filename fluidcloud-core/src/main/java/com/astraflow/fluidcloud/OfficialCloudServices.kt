@@ -28,6 +28,7 @@ object OfficialCloudServices {
     const val BATTERY = "268451902"
     const val SCREEN_PROTECTION = "268451928"
     const val DOWNLOAD = "268452010"
+    const val FILE_DOWNLOAD = "268451935"
     const val DND = "268452000"
     const val THREE_KEY = "268451918"
     const val EYE_PROTECT = "268451929"
@@ -77,11 +78,12 @@ object OfficialCloudServices {
 
     /** 外卖:美团外卖、美团拼好饭外卖、京东外卖(两种)、淘宝闪购、淘宝外卖、饿了么;快递提醒、车辆充电进度先按外卖模板排 */
     private val TAKEOUT_SERVICES = setOf("536878029", "536879077", "536879078", "536878631", "536878700", "536878973", "536878642",
-        "536877201", "536878265", "536879310")
+        "536877201", "536878265", "536879310", "268452868")
     /** 打车:高德打车 */
     private val RIDE_SERVICES = setOf("536877203")
     /** 应用下载、游戏更新、互传发送中 */
-    private val TASK_SERVICES = setOf(DOWNLOAD, "268451923", "268451905")
+    private val TASK_SERVICES = setOf(DOWNLOAD, FILE_DOWNLOAD, "268451923", "268451905", "536878801",
+        "268451954", "268451955", "268451938", "268452007", "268452008", "268452009", "268452027", "268452050")
     /** 导航:高德驾车、高德骑行步行、百度驾车、腾讯地图驾车;驾车红绿灯提醒(高德、百度、腾讯) */
     private val NAVIGATION_LAYOUT_SERVICES = setOf("536878696", "536879184", "536878591", "536879303", "536879377", "536879312", "536879383")
     /** 游戏自己的复活倒计时(王者荣耀) */
@@ -115,17 +117,26 @@ object OfficialCloudServices {
      */
     private val INTENT_LAYOUTS: Map<String, Layout> = buildMap {
         fun add(layout: Layout, vararg actions: String) = actions.forEach { put("pantanal.intent.$it", layout) }
-        add(Layout.TAKEOUT, "takeout.VIEW_ORDER_PROGRESS_V3", "delivery.FLUID", "new_energy_charging.VEHICLE_CHARGING_STATUS")
+        add(Layout.TAKEOUT, "takeout.VIEW_ORDER_PROGRESS_V3", "delivery.FLUID", "new_energy_charging.VEHICLE_CHARGING_STATUS",
+            "business.app.export.TAKE_OUT")
         add(Layout.RIDE, "ridehailing.VIEW_ORDER_V3")
         add(Layout.TASK, "business.app.system.MCS_DOWNLOAD_CARD", "business.app.system.UPDATE_PROGRESS",
-            "business.app.system.OSHARE_SENDER_PROCESS")
-        add(Layout.NAVIGATION, "prompt.DRIVING_NAVIGATION", "prompt.NAVIGATION_PROMPT_V6", "traffic_light.NAVIGATION_TRAFFIC_LIGHT",
+            "business.app.system.OSHARE_SENDER_PROCESS", "business.app.system.FILEMANAGER_FILE_DOWNLOAD",
+            "business.app.system.AI_PAPER", "business.app.system.EXECUTE_ASSISTANT", "business.app.system.MATRIX",
+            "business.app.system.MATRIX_IMMEDIATE", "business.app.system.AI_CAMERA_MOVEMENT", "business.app.system.AI_SCREEN_IMAGE",
+            "business.app.system.OPLUS_GALLERY_PHOTO_EDITOR_AI_RETOUCH", "business.app.system.BIG_FILE_TRANSPORT",
+            "game.UPDATE_PROGRESS")
+        add(Layout.NAVIGATION, "prompt.DRIVING_NAVIGATION", "prompt.NAVIGATION_PROMPT_V6", "business.app.system.NAVI_HANDOFF_CAR",
+            "traffic_light.NAVIGATION_TRAFFIC_LIGHT",
             "traffic_light.BAIDU_TRAFFIC_LIGHTS", "traffic_light.TENGXUN_TRAFFIC_LIGHTS")
         add(Layout.COUNTDOWN, "game.GAME_COUNTDOWN")
         add(Layout.REMINDER, "business.app.system.PAY_SCAN", "business.app.system.SCREEN_PROTECTION",
             "business.app.system.SMART_MEAL_PICKUP_CODE", "business.app.system.CALENDAR_ALARM", "business.app.system.CALENDAR_NOTIFICATION",
             "publictransit.SMART_SUBWAY_REMINDER_V2", "caralert.EMERGENCY_ALERT", "internal_xiaobu_memory.MOVIE_PERFORMANCE_MEMORY",
-            "internal_xiaobu_memory.SCENIC_SPOT_TICKET_MEMORY", "violation_reminder.VIOLATION_REMINDER_SERVICE", "system.FLUID_WLAN_ON",
+            "internal_xiaobu_memory.MOVIE_PERFORMANCE_MEMORY_V2", "internal_xiaobu_memory.HOTEL_SERVICES_MEMORY",
+            "internal_xiaobu_memory.SCENIC_SPOT_TICKET_MEMORY", "internal_xiaobu_memory.SCENIC_SPOT_TICKET_MEMORY_V2",
+            "business.app.system.AIMEMORY_WRITE_CLOCK", "violation_reminder.VIOLATION_REMINDER_SERVICE", "system.FLUID_WLAN_ON",
+            "system.FLUID_FLASH_OFF", "contentconsult.TEXT_INTENT_IDENTIFY_V2",
             "weather.EXTREME_WEATHER_WARN", "contentconsult.TEXT_INTENT_IDENTIFY", "weather.WEATHER_RAIN_FORECAST",
             "event_services.EVENT_FLUENCY_CLOUD", "video.FLUID_ADDRESS_CAR", "video.FLUID_ADDRESS_RECOGNITION",
             "attendance_reminder.ATTENDANCE_CLOCK", "business.app.system.MCS_DOWNLOAD_SWITCH", "business.app.system.OSHARE_USER_CONFIRM")
@@ -244,7 +255,7 @@ object OfficialCloudServices {
     fun recorder(serviceId: String): Boolean = serviceId in RECORDER_SERVICES
 
     /** 快递提醒服务的「快递取件」(卡片按表里的排法,胶囊和快递提醒一样) */
-    private val EXPRESS_PICKUP_SERVICES = setOf("536878933")
+    private val EXPRESS_PICKUP_SERVICES = setOf("536878933", "268452041")
 
     fun parcelPickup(snapshot: CloudSnapshot): Boolean = snapshot.serviceId in EXPRESS_PICKUP_SERVICES
 

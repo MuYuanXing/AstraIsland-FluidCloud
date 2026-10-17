@@ -63,7 +63,8 @@ object OfficialCloudImages {
         image.platform?.let { return EventImage.Platform(it, symbol, substitute = substitute) }
         if (image.animated) {
             val bytes = image.bytes?.takeIf { it.isNotEmpty() } ?: return null
-            return EventImage.Animation(image.key, image.playing, bytes, symbol, substitute = substitute)
+            return EventImage.Animation(image.key, image.playing, bytes, symbol, substitute = substitute,
+                loopStartFrame = image.loopStartFrame)
         }
         image.bitmap?.takeUnless { it.isRecycled }?.let { original ->
             // 系统可能在卡片结束时回收自己的位图；岛的收起动画只能引用扩展持有的副本。
