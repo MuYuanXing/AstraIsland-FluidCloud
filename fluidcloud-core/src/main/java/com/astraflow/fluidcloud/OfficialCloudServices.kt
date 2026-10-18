@@ -40,13 +40,20 @@ object OfficialCloudServices {
     private val COMPLETION_PAGES = setOf("completePage", "savePage")
 
     /** 系统界面在别的机型上用来播放音乐的服务号(插件里与 268452006 同样当作音乐)。 */
-    private val MEDIA_SERVICES = setOf(MEDIA, "268451910", "268451911")
+    private val MEDIA_SERVICES = setOf(MEDIA, "268451910", "268451911", "268451900")
     /** 系统开关的提示:手电筒、勿扰、三段式按键、护眼、个人热点、手势。 */
     private val SWITCH_SERVICES = setOf(FLASHLIGHT, DND, THREE_KEY, EYE_PROTECT, HOTSPOT, GESTURE)
     /** 用麦克风的系统服务:AI 语音摘记、识别背景音乐,按现行规则归入麦克风。 */
     private val MICROPHONE_SERVICES = setOf("268451848", "268452024")
+    /** 通话服务号:OPPO 电话、ColorOS 无障碍三方通话、一加电话。 */
+    private val CALL_SERVICES = setOf(CALL, "268451940", "268451915")
+    /** 设备快连:我的设备、耳机、配件。 */
+    private val DEVICE_SERVICES = setOf(MY_DEVICES, "268451912", "268451913")
     private val TIMER_SERVICES = setOf(TIMER, STOPWATCH, ALARM, GARB_ALARM, GAME_TIMER)
-    private val RECORDER_SERVICES = setOf(SCREEN_RECORDER, SOUND_RECORDER)
+    /** 一加时钟的计时器与一加录音:和一加手机的 OPPO 对应服务同样排。 */
+    private const val ONEPLUS_TIMER = "268451943"
+    private const val ONEPLUS_SOUND_RECORDER = "268451941"
+    private val RECORDER_SERVICES = setOf(SCREEN_RECORDER, SOUND_RECORDER, ONEPLUS_SOUND_RECORDER)
 
     private const val CLOCK_PROVIDER = "com.oplus.alarmclock.provider.communicate"
     /** 秒表计次按钮在卡片说明文件里的位置代号 */
@@ -79,19 +86,27 @@ object OfficialCloudServices {
     /** 外卖:美团外卖、美团拼好饭外卖、京东外卖(两种)、淘宝闪购、淘宝外卖、饿了么;快递提醒、车辆充电进度先按外卖模板排 */
     private val TAKEOUT_SERVICES = setOf("536878029", "536879077", "536879078", "536878631", "536878700", "536878973", "536878642",
         "536877201", "536878265", "536879310", "268452868")
-    /** 打车:高德打车 */
-    private val RIDE_SERVICES = setOf("536877203")
+    /** 打车:高德打车、流体云地址上车 */
+    private val RIDE_SERVICES = setOf("536877203", "536874945")
     /** 应用下载、游戏更新、互传发送中 */
     private val TASK_SERVICES = setOf(DOWNLOAD, FILE_DOWNLOAD, "268451923", "268451905", "536878801",
         "268451954", "268451955", "268451938", "268452007", "268452008", "268452009", "268452027", "268452050")
-    /** 导航:高德驾车、高德骑行步行、百度驾车、腾讯地图驾车;驾车红绿灯提醒(高德、百度、腾讯) */
-    private val NAVIGATION_LAYOUT_SERVICES = setOf("536878696", "536879184", "536878591", "536879303", "536879377", "536879312", "536879383")
+    /** 百度地图步行、骑行导航(卡片由场景服务代发):C17 手机上的服务号,服务意图是 NAVIGATION_PROMPT_V5 */
+    const val BAIDU_NAVIGATION = "536877940"
+    /** 导航:高德驾车、高德骑行步行、百度驾车、百度步行骑行、腾讯地图驾车;驾车红绿灯提醒(高德、百度、腾讯) */
+    private val NAVIGATION_LAYOUT_SERVICES = setOf("536878696", "536879184", "536878591", "536879303", "536879377", "536879312", "536879383", BAIDU_NAVIGATION)
     /** 游戏自己的复活倒计时(王者荣耀) */
     private val COUNTDOWN_SERVICES = setOf("536878737")
     /** 支付保护、应用内容已屏蔽、取单码、课程、地铁与各种场景提醒 */
+    // 智慧文本/日程、高铁与航班行程、地址识别、考勤打卡、赛事提醒、违章提醒、智慧备车、伴随助手、智能语音、纯净模式、
+    // 刷卡提醒、健康、小布记忆、一键闪记、红茶国际上网:都按通用提醒卡片排(系统卡片本身是标题+说明+按钮)。
     private val REMINDER_SERVICES = setOf("268451916", SCREEN_PROTECTION, "268451931", "268452048", "268452047", "536879177",
         "536875808", "536878517", "536878530", "536878968", "536874238", "536874236", "536878942", "536874734", "536879129",
-        "536879313", "536879143", "536879144", "536879305", "268452013", "268451904")
+        "536879313", "536879143", "536879144", "536879305", "268452013", "268451904",
+        "536879167", "536871053", "536871054", "536871055", "536871056", "536874766", "536878690", "536879314", "536879315",
+        "536879178", "268452019", "268452023", "268452046", "268452005", "268451925", "268451926", "268451936", "268452001",
+        "268452002", "268452012", "268452016", "268452017", "268452018", "268452022", "268452028", "268452037", "268452038",
+        "268452039", "268452040", "268452042", "268452043", "268460003", "268460005", "268460006", "536875277")
 
     /**
      * 这个事件在「展开卡片总表」里的排法;系统自带的计时、开关、录制、通话等不走这里(见 [kind])。
@@ -126,7 +141,8 @@ object OfficialCloudServices {
             "business.app.system.MATRIX_IMMEDIATE", "business.app.system.AI_CAMERA_MOVEMENT", "business.app.system.AI_SCREEN_IMAGE",
             "business.app.system.OPLUS_GALLERY_PHOTO_EDITOR_AI_RETOUCH", "business.app.system.BIG_FILE_TRANSPORT",
             "game.UPDATE_PROGRESS")
-        add(Layout.NAVIGATION, "prompt.DRIVING_NAVIGATION", "prompt.NAVIGATION_PROMPT_V6", "business.app.system.NAVI_HANDOFF_CAR",
+        add(Layout.NAVIGATION, "prompt.DRIVING_NAVIGATION", "prompt.NAVIGATION_PROMPT", "prompt.NAVIGATION_PROMPT_V5",
+            "prompt.NAVIGATION_PROMPT_V6", "business.app.system.NAVI_HANDOFF_CAR",
             "traffic_light.NAVIGATION_TRAFFIC_LIGHT",
             "traffic_light.BAIDU_TRAFFIC_LIGHTS", "traffic_light.TENGXUN_TRAFFIC_LIGHTS")
         add(Layout.COUNTDOWN, "game.GAME_COUNTDOWN")
@@ -164,16 +180,24 @@ object OfficialCloudServices {
      * 没有名字的按钮不显示(现行规则「系统事件接入」),这里只补系统按钮本来的意思。
      */
     fun iconButtonLabel(action: CloudAction?, data: Map<String, String>): String? = when (action?.method) {
-        "gaodeBwnaviOverview" -> if (data["showOverViewClose"]?.trim() == "true") "退出全览" else "全览"
+        "gaodeBwnaviOverview", "baiduBwnaviOverview" -> if (data["showOverViewClose"]?.trim() == "true") "退出全览" else "全览"
         // 系统录屏卡片的两个开关只画图标,朗读文字(「录制系统声音按钮 已选中」)只给读屏;星河岛上写它们是什么
         "audioSysClick" -> "系统声音"
         "audioMicClick" -> "麦克风"
         else -> null
     }
 
-    /** 卡片真正的来源应用:外卖这类由系统服务代发的卡片写着原来的应用(dataSourcePkgName);没写时就是卡片的包名。 */
-    fun sourcePackage(snapshot: CloudSnapshot): String =
-        snapshot.data["dataSourcePkgName"]?.trim()?.takeIf { it.matches(PACKAGE) && it != SYSTEM_UI } ?: snapshot.packageName
+    /**
+     * 卡片真正的来源应用:外卖这类由系统服务代发的卡片写着原来的应用(dataSourcePkgName);
+     * 百度步行骑行导航(536877940)在手机上的卡片数据把来源应用写在 targetPackageName;都没写时就是卡片的包名。
+     */
+    fun sourcePackage(snapshot: CloudSnapshot): String {
+        val keys = if (snapshot.serviceId == BAIDU_NAVIGATION) listOf("dataSourcePkgName", "targetPackageName")
+            else listOf("dataSourcePkgName")
+        return keys.firstNotNullOfOrNull { key ->
+            snapshot.data[key]?.trim()?.takeIf { it.matches(PACKAGE) && it != SYSTEM_UI }
+        } ?: snapshot.packageName
+    }
 
     private val PACKAGE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
 
@@ -181,19 +205,19 @@ object OfficialCloudServices {
     fun kind(snapshot: CloudSnapshot): EventKind {
         val id = snapshot.serviceId
         return when {
-            id == CALL -> EventKind.CALL
-            id == TIMER -> EventKind.TIMER
+            id in CALL_SERVICES -> EventKind.CALL
+            id == TIMER || id == ONEPLUS_TIMER -> EventKind.TIMER
             id == STOPWATCH -> EventKind.STOPWATCH
             id == ALARM -> EventKind.ALARM
             id == GARB_ALARM -> EventKind.FLASH_ALARM
             id == GAME_TIMER -> EventKind.GAME_TIMER
             completionPage(snapshot) -> EventKind.RECORDING_SAVED
             id == SCREEN_RECORDER -> EventKind.SCREEN_RECORDING
-            id == SOUND_RECORDER -> EventKind.SOUND_RECORDING
+            id == SOUND_RECORDER || id == ONEPLUS_SOUND_RECORDER -> EventKind.SOUND_RECORDING
             id in MICROPHONE_SERVICES -> EventKind.MICROPHONE_SERVICE
             id == CHARGE -> EventKind.CHARGING
             id == BATTERY -> EventKind.BATTERY_TIP
-            id == MY_DEVICES -> EventKind.DEVICE
+            id in DEVICE_SERVICES -> EventKind.DEVICE
             id in MEDIA_SERVICES || systemMediaNotification(snapshot) -> EventKind.MUSIC
             id in SWITCH_SERVICES -> EventKind.SYSTEM_SWITCH
             id == SATELLITE_CALL -> EventKind.SATELLITE_CALL
