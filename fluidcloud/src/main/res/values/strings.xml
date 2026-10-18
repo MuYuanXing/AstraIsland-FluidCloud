@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">流体云事件接入</string>
+    <string name="module_description">星流官方插件，适用于 OPPO、一加、真我手机。将系统流体云中的来电与通话、计时与闹钟、实时活动与系统状态交由星流的星河岛显示，并隐藏系统流体云中相同内容的胶囊。需同时在 LSPosed 中启用星流。</string>
+</resources>

@@ -1,0 +1,236 @@
+package com.astraflow.fluidcloud
+
+import android.os.Handler
+import android.os.Looper
+import com.astraflow.fluidcloud.hook.HookHelper
+import com.astraflow.fluidcloud.hook.Log
+import io.github.libxposed.api.XposedInterface
+import java.lang.reflect.Method
+import java.lang.ref.WeakReference
+import java.util.WeakHashMap
+
+/** 系统显示部分接收当前列表时执行归属;原始记录、内容、显示设置均不修改。重算成功后才确认交接。 */
+object OfficialCloudYield {
+    const val STATUS_BAR = 8
+    const val INTERCEPTOR = "pantanal.app.UIDataInterceptor"
+    const val OBSERVER = "pantanal.decision.DecisionObserver"
+    const val OPTIONS_EXTRA = "oplusLiveAlertOptions"
+    enum class Status(val report: String) {
+        UNKNOWN(""), PENDING("pending"), AVAILABLE("available"), PARTIAL("partial"), UNAVAILABLE("unavailable")
+    }
+    @Volatile var status = Status.UNKNOWN
+        private set
+    @Volatile private var confirmed: Set<String> = emptySet()
+    @Volatile private var effective: Set<String> = emptySet()
+    /** 已完成交接后结束的事件不交还系统,继续排除原生显示部分残留的同一条旧记录。 */
+    private var finished: Set<String> = emptySet()
+    private class Display(val method: Method, val entry: Any, val consumers: Map<Method, Int>) {
+        var owner = WeakReference<Any>(null)
+    }
+    private val displays = linkedMapOf<ClassLoader, Display>()
+    private val observedHolders = WeakHashMap<Any, Unit>()
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private val refreshing = ThreadLocal.withInitial { false }
+    private val failed = linkedSetOf<String>()
+    private val noted = linkedSetOf<String>()
+    private val deliveries = hashMapOf<Method, MutableSet<Any>>()
+    private var applied: Set<String>? = null
+    private var refreshPosted = false
+    private var testDisplay: ((Set<String>) -> Set<String>)? = null
+
+    /** 两个显示入口必须全部找到;合并在同一方法中的入口只安装一次。 */
+    fun installDisplay(loader: ClassLoader, renderers: List<Method>, refresh: Method?,
+                       unhooked: (Method) -> Boolean): List<XposedInterface.HookHandle> {
+        if (renderers.size != 2 || refresh == null || refresh.parameterCount != 2 ||
+            refresh.parameterTypes[1] != Boolean::class.javaPrimitiveType) {
+            markUnavailable(); return emptyList()
+        }
+        val entry = refresh.parameterTypes[0].enumConstants?.firstOrNull { (it as? Enum<*>)?.name == "ENTRY_STATUS_BAR" }
+        if (entry == null) { markUnavailable(); return emptyList() }
+        val handles = mutableListOf<XposedInterface.HookHandle>()
+        for (method in renderers.distinct()) {
+            if (!unhooked(method)) continue
+            val handle = HookHelper.hookArguments(method, afterCallback = { chain ->
+                if (refreshing.get() == true) chain.thisObject?.let { owner ->
+                    deliveries.getOrPut(method) { java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Any, Boolean>()) }.add(owner)
+                }
+            }) { chain ->
+                chain.thisObject?.let(::observeDisplay)
+                val input = chain.getArg(0) as? List<*> ?: error("native display list missing")
+                arrayOf(filter(input))
+            }
+            if (handle == null) {
+                handles.forEach(HookHelper::unhook)
+                error("native display interceptor could not be installed: $method")
+            }
+            handles += handle
+        }
+        synchronized(displays) { displays[loader] = Display(refresh.apply { isAccessible = true }, entry, renderers.groupingBy { it }.eachCount()) }
+        synchronized(observedHolders) { observedHolders.keys.toList() }.forEach(::observeDisplay)
+        applied = null
+        updateStatus(Status.PENDING)
+        requestRefresh()
+        return handles
+    }
+
+    /** 从系统已经创建的监听者取得显示管理对象,不读取静态字段触发系统的提前初始化。 */
+    fun observeDisplay(holder: Any) {
+        synchronized(observedHolders) { observedHolders[holder] = Unit }
+        val targets = synchronized(displays) { displays.values.toList() }
+        for (target in targets) {
+            val type = target.method.declaringClass
+            val direct = if (type.isInstance(holder)) holder else OfficialCloudReflection.fieldOfType(holder, type.name)?.takeIf(type::isInstance)
+            val owner = direct ?: OfficialCloudReflection.fields(holder.javaClass).firstNotNullOfOrNull { field ->
+                val value = runCatching { field.isAccessible = true; field.get(holder) }.getOrNull()
+                value?.let { OfficialCloudReflection.fieldOfType(it, type.name) }?.takeIf(type::isInstance)
+            } ?: continue
+            if (target.owner.get() !== owner) {
+                target.owner = WeakReference(owner)
+                applied = null
+                if (refreshing.get() != true) requestRefresh()
+            }
+        }
+    }
+
+    /** 最新系统显示列表的副本。只删除本次明确交给星河岛的状态栏事件。 */
+    fun filter(input: List<*>): ArrayList<Any?> {
+        val output = ArrayList<Any?>(input.size)
+        val available = synchronized(displays) { displays.isNotEmpty() } || testDisplay != null
+        for (model in input) {
+            if (model == null || !available) { output += model; continue }
+            val key = OfficialCloudReflection.nativeKey(model)
+            if (key == null) {
+                reject(effective, model)
+                output += model; continue
+            }
+            if (key !in effective) { output += model; continue }
+            val entrance = displayEntrance(model)
+            if (entrance == "ENTRY_STATUS_BAR") continue
+            if (entrance == null) {
+                reject(setOf(key), model)
+            }
+            output += model
+        }
+        if (refreshing.get() != true && applied == null) requestRefresh()
+        return output
+    }
+
+    private fun reject(keys: Set<String>, model: Any) {
+        if (keys.isEmpty()) return
+        synchronized(failed) { failed += keys }
+        confirmed = confirmed - keys
+        applied = null
+        val type = model.javaClass.name
+        if (synchronized(noted) { noted.size < 64 && noted.add(type) })
+            Log.w("OfficialCloud", "native display identity or entrance unreadable on $type; its events remain with the system")
+    }
+
+    /** 显示记录自身或其唯一的原始记录持有显示位置;不根据字段短名识别。 */
+    private fun displayEntrance(model: Any): String? {
+        OfficialCloudReflection.entranceName(model)?.let { return it }
+        val key = OfficialCloudReflection.nativeKey(model)
+        val raw = OfficialCloudReflection.fields(model.javaClass).mapNotNull { field ->
+            runCatching { field.isAccessible = true; field.get(model) }.getOrNull()?.takeIf {
+                it !== model && OfficialCloudReflection.nativeKey(it) == key && OfficialCloudReflection.call(it, "getSourceType") != null
+            }
+        }.singleOrNull() ?: return null
+        return OfficialCloudReflection.entranceName(raw)
+    }
+
+    fun confirmedKeys(): Set<String> = confirmed
+    fun yieldedCount(): Int = confirmed.size
+
+    fun refresh() {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (refreshing.get() == true) return
+        val desired = OfficialCloudSource.requestedNativeKeys()
+        val alive = OfficialCloudSource.aliveNativeKeys()
+        finished = (finished + (confirmed - alive)) - alive
+        val target = desired + finished
+        if (applied == target) { confirmed = desired; return }
+        effective = target
+        testDisplay?.let { display ->
+            runCatching { display(target) }.onSuccess {
+                confirmed = it.intersect(desired); effective = it.intersect(target)
+                applied = if (effective == target) target else null
+            }.onFailure { confirmed = emptySet(); effective = finished; applied = null }
+            return
+        }
+        val targets = synchronized(displays) { displays.values.distinctBy { it.method } }
+        if (targets.isEmpty()) { confirmed = emptySet(); effective = finished; return }
+        if (targets.any { it.owner.get() == null }) {
+            confirmed = emptySet(); effective = finished; updateStatus(Status.PENDING); return
+        }
+        synchronized(failed) { failed.clear() }
+        refreshing.set(true)
+        fun dispatch(): Boolean =
+            targets.map { target ->
+                runCatching {
+                    deliveries.clear()
+                    val owner = target.owner.get() ?: error("native display owner not ready")
+                    target.method.invoke(owner, target.entry, false)
+                    check(target.consumers.all { (method, count) -> (deliveries[method]?.size ?: 0) >= count }) {
+                        "native capsule and card consumers have not both completed"
+                    }
+                }.onFailure { Log.e("OfficialCloud", "native display handover failed", it) }.isSuccess
+            }.all { it }
+        val success = try { dispatch() } finally { refreshing.set(false); deliveries.clear() }
+        if (success) {
+            effective = target - synchronized(failed) { failed.toSet() }
+            confirmed = desired.intersect(effective)
+            applied = if (effective == target) target else null
+            updateStatus(if (effective == target) Status.AVAILABLE else Status.PARTIAL)
+        } else {
+            confirmed = emptySet(); applied = null
+            effective = finished
+            updateStatus(if (success) Status.PENDING else Status.UNAVAILABLE)
+        }
+        if (effective != target) {
+            // 未完成交接的在途事件交还系统;已结束的旧事件不恢复显示。
+            refreshing.set(true)
+            try { dispatch() } finally { refreshing.set(false); deliveries.clear() }
+        }
+    }
+
+    fun retire(loader: ClassLoader) {
+        synchronized(displays) { displays.remove(loader) }
+        applied = null
+        requestRefresh()
+    }
+
+    fun markUnavailable() {
+        synchronized(displays) { displays.clear() }
+        confirmed = emptySet(); effective = emptySet(); applied = null
+        updateStatus(Status.UNAVAILABLE)
+        requestRefresh()
+    }
+
+    private fun updateStatus(next: Status) {
+        if (status == next) return
+        status = next
+        OfficialCloudSource.reportVisibility()
+    }
+
+    private fun requestRefresh() {
+        synchronized(this) {
+            if (refreshPosted) return
+            refreshPosted = true
+        }
+        main.post {
+            synchronized(this) { refreshPosted = false }
+            OfficialCloudSource.refresh()
+        }
+    }
+
+    /** 内容与接手规则检查使用的显示执行器;显示入口本身由独立检查覆盖。 */
+    fun displayForTest(display: (Set<String>) -> Set<String>) { testDisplay = display; applied = null }
+
+    fun resetForTest() {
+        synchronized(displays) { displays.clear() }
+        synchronized(failed) { failed.clear() }
+        synchronized(observedHolders) { observedHolders.clear() }
+        synchronized(noted) { noted.clear() }
+        status = Status.UNKNOWN; confirmed = emptySet(); effective = emptySet(); finished = emptySet(); applied = null; testDisplay = null
+        refreshPosted = false; deliveries.clear()
+    }
+}

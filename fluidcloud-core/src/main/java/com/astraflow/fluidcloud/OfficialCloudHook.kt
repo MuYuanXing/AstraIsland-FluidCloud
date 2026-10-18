@@ -1,0 +1,339 @@
+package com.astraflow.fluidcloud
+
+import com.astraflow.fluidcloud.hook.HookHelper
+import com.astraflow.fluidcloud.hook.PluginClassLoaderInterceptor
+import com.astraflow.fluidcloud.hook.Logger
+import io.github.libxposed.api.XposedInterface
+import org.luckypray.dexkit.DexKitBridge
+import java.io.File
+import java.lang.reflect.Method
+import java.security.MessageDigest
+import java.util.Collections
+import java.util.WeakHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * 在系统流体云插件上装读数据和让位的挂钩(现行规则「系统事件接入」)。接收、模板引擎、服务开关和通知原件均由系统继续维护。
+ * - 系统服务的卡片:按 OPPO 接口找挂点(卡片内容、服务名单、撤掉名单监听),由 OfficialCloudSeedlingReader 读,不认插件的日志文字;
+ * - 通知变成的胶囊:OPPO 接口里没有,旁读插件自己的数据监听(按监听方法里写日志用的文字找),只读这一种;
+ * - 原生胶囊与展开卡片在显示入口执行归属(OfficialCloudYield),数据读取不改系统显示设置。
+ */
+object OfficialCloudHook {
+    private const val TAG = "OfficialCloud"
+    /**
+     * 实际反编译核对过的那一版插件。只在这一版上读通知变成的胶囊里系统已经画好的控件(取控件用的是这一版里的短名字);
+     * 其它版本不读这些控件;数据读取与显示交接能力分别核对。
+     */
+    const val VERIFIED_PLUGIN_SHA256 = "ad74975487c99d7a9ed29ebf8f5f644283a3ad096f89b75e2bca3003cca1be7a"
+    val anchors = linkedMapOf(
+        CloudChange.REPLACE to "EntryDataListener,onDataChanged originData:",
+        CloudChange.POST to "EntryDataListener,onDataPosted originData:",
+        CloudChange.REMOVE to "EntryDataListener,onDataRemoved originData:",
+    )
+    /** 装着数据监听的各代插件,按装上的先后 */
+    private val generations = mutableListOf<Generation>()
+    private val owners = WeakHashMap<Any, String>()
+    private val sequence = AtomicLong()
+    private val ownerSequence = AtomicLong()
+    @Volatile private var registered = false
+
+    /** 一份插件文件:路径、大小、修改时间都一样就是同一份,在它上面找过的结果照用 */
+    data class PluginFile(val path: String, val size: Long, val modified: Long)
+
+    /** 监听方法在插件里的位置(类名、方法名、参数类型),按每个类加载器再换成方法;只记名字,不留住插件的类 */
+    data class MethodRef(val className: String, val name: String, val params: List<String>) {
+        fun resolve(loader: ClassLoader): Method = Class.forName(className, false, loader)
+            .getDeclaredMethod(name, *params.map { if (it == "boolean") java.lang.Boolean.TYPE else Class.forName(it, false, loader) }.toTypedArray())
+    }
+
+    /**
+     * 在一份插件文件上找到的:三个监听方法(找不到为 null)、是不是核对过的那一版,以及让位要用的两处——
+     * 接收卡片内容的类([interceptors],实现 OPPO 接口 UIDataInterceptor)和接收服务名单的类([observers],实现 DecisionObserver)。
+     */
+    class PluginScan(
+        val listeners: Map<CloudChange, MethodRef?>, val verified: Boolean,
+        val interceptors: List<String> = emptyList(), val observers: List<String> = emptyList(),
+        val renderers: List<MethodRef> = emptyList(), val refreshDisplay: MethodRef? = null,
+        val api: OfficialCloudPlatform.Api = OfficialCloudPlatform.Api.LEGACY,
+    )
+
+    /**
+     * 装着挂钩的一代插件:送来的类加载器、这一代挂上的通知胶囊监听方法所属的类(这一份插件文件里一个都找不到时为空)、
+     * 装的时候读的插件文件、装上的挂钩(找到的监听、卡片内容与服务名单两处、撤掉名单监听一处),以及这一代送过数据的监听者编号。
+     * 插件重新加载后,新一代收到数据、这一代的监听者和记录管理都已经不在时撤掉([retireOlderThan]),不再留住换下来的插件。
+     */
+    private class Generation(val loader: ClassLoader, val listeners: Set<Class<*>>, val file: PluginFile) {
+        val hooks = mutableListOf<XposedInterface.HookHandle>()
+        val ownerIds: MutableSet<String> = Collections.synchronizedSet(linkedSetOf())
+        /** 挂钩所在的类是哪些类加载器定义的(记录管理是这一代的,就认得出) */
+        val definers: Set<ClassLoader> get() = hooks.mapNotNullTo(mutableSetOf()) { it.executable.declaringClass.classLoader }
+    }
+
+    /** 找过的插件文件(找不到监听处的也记下),插件重新加载、换一代类加载器时不再重找 */
+    private val scans = object : LinkedHashMap<PluginFile, PluginScan>(8, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PluginFile, PluginScan>?) = size > 8
+    }
+    /** 在插件文件上找监听处、核对插件文件(检查里换成别的) */
+    @Volatile var scanner: (String) -> PluginScan = ::scan
+    private val worker: ExecutorService = Executors.newSingleThreadExecutor { Thread(it, "AstraFlow-CloudHook").apply { isDaemon = true } }
+
+    fun register() {
+        if (registered) return
+        registered = true
+        PluginClassLoaderInterceptor.registerCallback { loader, path -> install(loader, path) }
+        PluginClassLoaderInterceptor.registerSeedlingCallback { loader, path -> install(loader, path) }
+        OfficialCloudSystemTips.install(HookHelper.classLoader)
+    }
+
+    /**
+     * 插件的类加载器就绪(第一次加载或插件重新加载)时装数据监听。找监听处、核对插件文件都在后台线程做,系统界面主线程不等;
+     * 同一份插件文件只找一次,找不到的也记下。没装上时把原因写进岛的日志,并报给「系统流体云接入」页(现行规则「系统事件接入」)。
+     */
+    fun install(loader: ClassLoader, path: String) {
+        if (synchronized(generations) { generations.any { it.loader === loader } }) return
+        worker.execute { installOn(loader, path) }
+    }
+
+    private fun installOn(loader: ClassLoader, path: String) {
+        if (synchronized(generations) { generations.any { it.loader === loader } }) return
+        val apk = path.substringAfterLast('/')
+        val file = File(path)
+        val identity = PluginFile(path, file.length(), file.lastModified())
+        // 同一个路径的插件文件换了新的一份:按旧文件装上的那几代属于换下来的插件,这里装不上时照样报不可用
+        val replaced = synchronized(generations) { generations.any { it.file.path == path && it.file != identity } }
+        // 这份文件以前在找代码的途中把系统界面带崩过:不再找,按装不上报(见 CrashGuard)
+        val guardKey = "${identity.path}|${identity.size}|${identity.modified}"
+        if (synchronized(scans) { scans[identity] } == null && com.astraflow.fluidcloud.hook.CrashGuard.isSkipped(guardKey)) {
+            unavailable(apk, "plugin file skipped: an earlier code search on it ended SystemUI", superseded = replaced)
+            return
+        }
+        val scan = synchronized(scans) { scans[identity] } ?: try {
+            com.astraflow.fluidcloud.hook.CrashGuard.risky(guardKey) { scanner(path) }.also { found -> synchronized(scans) { scans[identity] = found } }
+        } catch (failure: Throwable) {
+            // 代码搜索读不了这份插件文件:不记下,插件重新加载时再找
+            unavailable(apk, "plugin could not be searched", failure, superseded = replaced)
+            return
+        }
+        runCatching {
+            // 同一插件可能有多个加载器(壳/业务分开),在这个加载器上换不出方法按"锚点不在此"处理,不炸安装。
+            val methods = scan.listeners.mapValues { (_, ref) -> ref?.let { runCatching { it.resolve(loader) }.getOrNull() } }
+            val unresolved = methods.filterValues { it == null }.keys
+            val resolvedAll = methods.mapNotNull { (change, method) -> method?.let { change to it } }.toMap()
+            val resolvedOwners = resolvedAll.values.mapTo(linkedSetOf()) { it.declaringClass }
+            val rendering = scan.renderers.mapNotNull { runCatching { it.resolve(loader) }.getOrNull() }
+            val refreshing = scan.refreshDisplay?.let { runCatching { it.resolve(loader) }.getOrNull() }
+            if (scan.api == OfficialCloudPlatform.Api.C17 &&
+                (rendering.size != 2 || refreshing == null)) {
+                unavailable(apk, "C17 display interfaces incomplete; legacy hooks are not installed",
+                    superseded = replaced || resolvedOwners.isNotEmpty())
+                return
+            }
+            // C17 的通知接收必须有完整生命周期;缺失只停通知接收,不连带停掉公共接口读取的系统服务。
+            val completeNotifications = scan.api != OfficialCloudPlatform.Api.C17 || resolvedAll.keys == anchors.keys
+            val resolved = if (completeNotifications) resolvedAll.filterValues(::unhookedMethod) else emptyMap()
+            val listenerClasses = resolved.values.mapTo(linkedSetOf()) { it.declaringClass }
+            val allShared = (completeNotifications && resolvedAll.isNotEmpty() && resolved.isEmpty()) ||
+                (scan.api == OfficialCloudPlatform.Api.C17 && rendering.isNotEmpty() && rendering.all { !unhookedMethod(it) })
+            // 系统服务卡片的挂点(OPPO 接口):这个类加载器里换得出、还没有哪一代挂过的那几个类
+            val interceptors = scan.interceptors.filter { unhooked(loader, it) }
+            val observers = scan.observers.filter { unhooked(loader, it) }
+            val manager = unhooked(loader, OfficialCloudSeedlingReader.MANAGER)
+            val publicApi = interceptors.isNotEmpty() || observers.isNotEmpty() || manager
+            if (resolved.isEmpty() && !publicApi) {
+                if (allShared) com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners already installed for the loader on $apk")
+                // 什么都没有:插件的外壳、只管资源的类加载器或别的插件;有监听者的类却听不了:这一代插件听不了
+                else unavailable(apk, "listener anchors unresolved: missing=$unresolved owners=${resolvedOwners.map { it.name }}",
+                    superseded = replaced || resolvedOwners.isNotEmpty())
+                return
+            }
+            val verified = scan.verified
+            val generation = Generation(loader, listenerClasses, identity)
+            try {
+                resolved.forEach { (change, method) ->
+                    // 通知胶囊的数据读取与显示交接分别处理
+                    val handle = HookHelper.hookMethod(method) { chain, result ->
+                        run {
+                            val owner = chain.thisObject
+                            owner?.let(OfficialCloudYield::observeDisplay)
+                            // 系统服务卡片由 OfficialCloudSeedlingReader 从 OPPO 接口读,这里只读通知变成的胶囊
+                            val data = (chain.getArg(0) as? List<*>)?.filterNotNull()?.take(128)?.filter(OfficialCloudReflection::isCommon)
+                            val known = owner?.let { synchronized(owners) { owners[it] } }
+                            if (owner != null && data != null && (known != null || data.isNotEmpty())) {
+                                val ownerId = known ?: synchronized(owners) { owners.getOrPut(owner) { "listener-${ownerSequence.incrementAndGet()}" } }
+                                generation.ownerIds += ownerId
+                                diagnoseArrival(ownerId, owner, change, data)
+                                OfficialCloudSource.receive(ownerId, nextRevision(), change, data, verified)
+                                dropDeadOwners()
+                                retireOlderThan(generation)
+                            }
+                        }
+                        result
+                    } ?: error("listener hook unavailable")
+                    generation.hooks += handle
+                }
+                // 同一代的读取与显示安装必须整体完成,失败时撤回本次已安装部分。
+                generation.hooks += OfficialCloudReaderHooks.install(loader, interceptors, observers, manager, ::unhookedMethod)
+                if (resolvedAll.isNotEmpty() || scan.renderers.isNotEmpty() || scan.refreshDisplay != null) {
+                    generation.hooks += OfficialCloudYield.installDisplay(loader, rendering, refreshing, ::unhookedMethod)
+                }
+            } catch (failure: Throwable) {
+                generation.hooks.forEach { runCatching { it.unhook() } }
+                throw failure
+            }
+            OfficialCloudSource.reportVisibility()
+            synchronized(generations) { generations += generation }
+            com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners installed; api=${scan.api} notification capsules=${listenerClasses.isNotEmpty()} reviewed plugin=$verified on $apk")
+            if (resolved.isEmpty() && !allShared) com.astraflow.fluidcloud.hook.Log.w(TAG, "notification capsules unreadable on $apk: " +
+                "listener anchors unresolved: missing=$unresolved owners=${resolvedOwners.map { it.name }}")
+            else if (unresolved.isNotEmpty()) com.astraflow.fluidcloud.hook.Log.w(TAG,
+                "notification capsule listeners incomplete on $apk: missing=$unresolved")
+            Logger.xposedLog(TAG, "official event listeners installed; notification capsules=${listenerClasses.isNotEmpty()} capsule yield=${OfficialCloudYield.status.report}")
+        }.onFailure {
+            Logger.e(TAG, "official event listeners unavailable", it)
+            // 这个类加载器上有监听者的类却装不上:没装上的正是这一代插件
+            unavailable(apk, "install failed", it, superseded = true)
+        }
+    }
+
+    /** [name] 这个类在 [loader] 里换得出,并且还没有哪一代在它上面挂过(同一个类只挂一次) */
+    private fun unhooked(loader: ClassLoader, name: String): Boolean {
+        val type = runCatching { Class.forName(name, false, loader) }.getOrNull() ?: return false
+        return synchronized(generations) { generations.none { generation -> generation.hooks.any { it.executable.declaringClass === type } } }
+    }
+
+    /** 这个方法还没有哪一代挂过(跨类加载器共享的父类方法只挂一遍,子类的调用一样被拦) */
+    private fun unhookedMethod(method: Method): Boolean =
+        synchronized(generations) { generations.none { generation -> generation.hooks.any { it.executable == method } } }
+
+    /** 交给 OfficialCloudSource 的每一份数据带的版本号(通知胶囊和系统服务卡片共用,越新越大) */
+    fun nextRevision(): Long = sequence.incrementAndGet()
+
+    /**
+     * 系统服务卡片的读法从这一代插件的记录管理([loader] 定义的)收到了数据:比它早装上、监听者和记录管理都已经不在的那几代撤掉。
+     */
+    fun onReaderData(loader: ClassLoader?) {
+        val current = synchronized(generations) { generations.lastOrNull { loader != null && loader in it.definers } } ?: return
+        retireOlderThan(current)
+    }
+
+    /**
+     * 数据监听在这个类加载器上没装上:原因写进岛的日志(正式包也看得到)。一代都还没装好,或者没装上的正是新一代插件
+     * ([superseded]:这个类加载器上有监听者的类却听不了,或者同一个路径的插件文件换了新的一份)时,把「不可用」报给
+     * 「系统流体云接入」页,页面照已有的办法写明(现行规则「系统事件接入」)。已经有一代装好、这里一个监听方法都没有时不改:
+     * 插件每次加载都紧跟着送来一个只管资源的类加载器,系统流体云的另一个插件也会送来,它们都没有监听处。
+     */
+    private fun unavailable(apk: String, reason: String, failure: Throwable? = null, superseded: Boolean = false) {
+        val elsewhere = !superseded && synchronized(generations) { generations.isNotEmpty() }
+        com.astraflow.fluidcloud.hook.Log.w(TAG, "official event listeners not installed on $apk: $reason" +
+            if (elsewhere) " (listening through another loader)" else "", failure)
+        if (elsewhere) return
+        OfficialCloudYield.markUnavailable()
+        OfficialCloudSource.reportVisibility()
+    }
+
+    /**
+     * 插件重新加载后新一代收到了数据:比它早装上、监听者对象都已经不在的那几代撤掉监听挂钩和让位的挂钩,
+     * 它们留下的记录一并撤掉,不再留住换下来的插件。旧一代的监听者还在(还有人用)时不撤。
+     */
+    private fun retireOlderThan(current: Generation) {
+        val managers = OfficialCloudSeedlingReader.liveLoaders()
+        val retired = synchronized(generations) {
+            val older = generations.subList(0, generations.indexOf(current).coerceAtLeast(0))
+                .filter { old -> old.file.path == current.file.path &&
+                    synchronized(owners) { old.listeners.isEmpty() || owners.keys.none { o -> old.listeners.any { cls -> cls.isInstance(o) } } } &&
+                    old.definers.none(managers::contains) }
+            generations.removeAll(older)
+            older
+        }
+        retired.forEach { old ->
+            OfficialCloudYield.retire(old.loader)
+            old.hooks.forEach(HookHelper::unhook)
+            val ids = synchronized(old.ownerIds) { old.ownerIds.toSet() }
+            if (ids.isNotEmpty()) OfficialCloudSource.dropOwners(ids)
+            com.astraflow.fluidcloud.hook.Log.i(TAG, "listeners of a replaced plugin generation removed on ${old.file.path.substringAfterLast('/')}")
+        }
+    }
+
+    /**
+     * 用自己的代码搜索实例在插件文件上找(用完就关;不借插件拦截器那一份,它会在插件重新加载时被关掉)。
+     * 让位的两处按 OPPO 接口找:实现了卡片内容接口、服务名单接口的类。
+     */
+    private fun scan(path: String): PluginScan = DexKitBridge.create(path).use { bridge ->
+        val c17 = bridge.findClass { matcher { className = OfficialCloudPlatform.C17_ENTRY } }.isNotEmpty()
+        fun implementers(api: String) = runCatching { bridge.findClass { matcher { addInterface(api) } }.map { it.name } }.getOrDefault(emptyList())
+        val interceptors = implementers(OfficialCloudYield.INTERCEPTOR)
+        val observers = implementers(OfficialCloudYield.OBSERVER)
+        val verified = hash(path) == VERIFIED_PLUGIN_SHA256
+        OfficialCloudPlatform.select(c17, modern = {
+            OfficialCloudPlatform.scanC17(bridge, verified, interceptors, observers)
+        }, legacy = {
+            val listeners = anchors.mapValues { (_, anchor) ->
+                bridge.findMethod { matcher { usingStrings(anchor); paramCount = 1; paramTypes = listOf("java.util.List") } }
+                    .singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
+            }
+            fun display(vararg strings: String) = bridge.findMethod {
+                matcher { usingStrings(*strings); paramCount = 1; returnType = "void" }
+            }.singleOrNull()?.takeIf { it.paramTypeNames.single() in setOf("java.util.ArrayList", "java.util.List") }
+                ?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
+            val renderers = listOfNotNull(display("CapsulesRepository", "onDataChanged, hasSystem["),
+                display("CardsRepository", "onDataChanged, size:"))
+            val refresh = bridge.findMethod {
+                matcher { usingStrings("notifyEntryDataChanged skip due to released"); paramCount = 2; returnType = "void" }
+            }.singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
+            PluginScan(listeners, verified = verified, interceptors = interceptors, observers = observers,
+                renderers = renderers, refreshDisplay = refresh)
+        })
+    }
+
+    /** 检查用:等已经交给后台线程的安装做完 */
+    fun awaitInstalls() {
+        runCatching { worker.submit {}.get(5, java.util.concurrent.TimeUnit.SECONDS) }
+    }
+
+    fun resetForTest() {
+        synchronized(generations) { generations.clear() }
+        synchronized(owners) { owners.clear() }
+        synchronized(scans) { scans.clear() }
+        scanner = ::scan
+    }
+
+    /**
+     * 到货诊断(正式包也写进岛的日志):每个监听者按「变化类型、服务号、卡片引擎在不在、内容树有没有」签名写一行,
+     * 签名变了才写。看得出系统送来了什么、卡片排好没有,不用猜。
+     */
+    private val arrivals = linkedSetOf<String>()
+
+    private fun diagnoseArrival(ownerId: String, owner: Any, change: CloudChange, data: List<Any>) {
+        runCatching {
+            val entry = owner.javaClass.declaredFields.firstOrNull { it.type.isEnum }
+                ?.let { field -> field.isAccessible = true; field.get(owner)?.toString() } ?: "?"
+            data.filter(OfficialCloudReflection::isOfficial).forEach { model ->
+                val line = "$ownerId($entry) $change ${OfficialCloudReflection.describe(model)}"
+                val fresh = synchronized(arrivals) { if (arrivals.size > 512) arrivals.clear(); arrivals.add(line.substringBefore(" data=")) }
+                if (fresh) com.astraflow.fluidcloud.hook.Log.i(TAG, "arrival: $line")
+            }
+        }
+    }
+
+    /** 监听者对象已经不在了(插件重载后换了新对象):它留下的记录一并撤掉,不留下永远不会结束的卡片。 */
+    private fun dropDeadOwners() {
+        val live = synchronized(owners) { owners.values.toSet() }
+        val dead = synchronized(generations) {
+            generations.flatMapTo(linkedSetOf()) { generation ->
+                synchronized(generation.ownerIds) { (generation.ownerIds - live).also { generation.ownerIds.removeAll(it) } }
+            }
+        }
+        if (dead.isNotEmpty()) OfficialCloudSource.dropOwners(dead)
+    }
+
+    private fun hash(path: String): String? = runCatching {
+        val digest = MessageDigest.getInstance("SHA-256")
+        File(path).inputStream().use { input ->
+            val bytes = ByteArray(65536)
+            while (true) { val read = input.read(bytes); if (read < 0) break; digest.update(bytes, 0, read) }
+        }
+        digest.digest().joinToString("") { "%02x".format(it) }
+    }.getOrNull()
+}

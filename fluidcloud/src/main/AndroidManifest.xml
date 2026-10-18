@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      系统界面里的插件请插件应用重新报一遍状态时,只收持有这项权限的发送方(插件应用自己);
+      星流和插件用同一把签名,星流也能向插件取状态、交原来的设置。
+    -->
+    <permission
+        android:name="com.astraflow.fluidcloud.permission.INTERNAL"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.astraflow.fluidcloud.permission.INTERNAL" />
+    <!-- 打开系统的「流体云」设置页(系统通知管理应用里的那一页要求这项普通权限) -->
+    <uses-permission android:name="com.oplus.notificationmanager.FLUID_SEEDING_SETTINGS" />
+
+    <queries>
+        <!-- 只认和插件同一把签名的星流 -->
+        <package android:name="com.astraflow.tool" />
+        <!-- LSPosed 管理器:打开插件的模块页 -->
+        <package android:name="org.lsposed.manager" />
+        <package android:name="io.github.lsposed.manager" />
+        <!-- 系统的「流体云」设置页 -->
+        <intent>
+            <action android:name="oplus.fluid.seeding.settings.main" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".app.FluidCloudApp"
+        android:allowBackup="false"
+        android:description="@string/module_description"
+        android:extractNativeLibs="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FluidCloud">
+
+        <!-- LSPosed 识别模块(入口在 META-INF/xposed/java_init.list) -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="@string/module_description" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope" />
+
+        <!-- 设置页:没有桌面图标,从 LSPosed 的模块页或星流的星河岛页打开 -->
+        <activity
+            android:name=".app.SettingsActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+            <!-- 星流从星河岛页打开接入件的设置页(com.astraisland.events.AdapterApp.ACTION_SETTINGS) -->
+            <intent-filter>
+                <action android:name="com.astraisland.events.action.ADAPTER_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- 系统界面里的插件报来的状态(星河岛收没收下、系统胶囊能不能藏);只认系统界面发来的 -->
+        <receiver
+            android:name=".app.StatusReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.astraflow.fluidcloud.action.STATUS" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 星流取插件的状态、交原来的设置;只认和插件同一把签名的星流 -->
+        <provider
+            android:name=".app.StateProvider"
+            android:authorities="com.astraflow.fluidcloud.state"
+            android:exported="true" />
+    </application>
+
+</manifest>
