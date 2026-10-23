@@ -1,12 +1,12 @@
 [versions]
 # ── 构建工具 ──
 agp = "9.4.1"
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 
 # ── AndroidX ──
 core-ktx = "1.17.0"
 activity-compose = "1.13.0"
-lifecycle = "2.10.0"
+lifecycle = "2.11.0"
 
 # ── Compose ──
 compose-bom = "2026.09.00"
@@ -19,7 +19,10 @@ libxposed-service = "101.0.0"
 dexkit = "2.0.7"
 
 # ── 界面部件 ──
-compose-hig = "1.4.1"
+# 主仓用打了性能补丁的 27.0.1-alpha05-astraflow1（那版只发布在本机 mavenLocal），公开项目用同版本的官方包：
+# API 相同，不必把本机补丁版引进来。
+compose-hig = "27.0.1-alpha05"
+compose-hig-icons = "27.0.1-alpha05"
 kyant-backdrop = "2.0.1"
 
 # ── 测试 ──
@@ -36,7 +39,7 @@ libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "li
 libxposed-service = { group = "io.github.libxposed", name = "service", version.ref = "libxposed-service" }
 dexkit = { group = "org.luckypray", name = "dexkit", version.ref = "dexkit" }
 compose-hig = { group = "zone.ien.hig", name = "hig", version.ref = "compose-hig" }
-compose-hig-icons = { group = "zone.ien.hig", name = "hig-icons-extended", version.ref = "compose-hig" }
+compose-hig-icons = { group = "zone.ien.hig", name = "hig-icons-extended", version.ref = "compose-hig-icons" }
 kyant-backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "kyant-backdrop" }
 junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
 
