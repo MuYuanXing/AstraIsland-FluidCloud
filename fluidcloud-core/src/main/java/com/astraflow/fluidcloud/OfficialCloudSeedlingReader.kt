@@ -198,6 +198,13 @@ object OfficialCloudSeedlingReader {
         return Located(manager, entrance, model, service, OfficialCloudReflection.fieldOfType(model, CARD), key, user)
     }
 
+    /**
+     * 这一份卡片内容星流接不接得住:接收对象认得出(记录管理、记录、服务信息都在),内容里也有卡片数据。
+     * 源头拦截(OfficialCloudGate)截住前先核这一遍,接不住的不截,交给系统照常处理。
+     */
+    fun readable(interceptor: Any, data: Any?): Boolean =
+        locate(interceptor) != null && OfficialCloudReflection.call(data, "getSeedlingUIData") != null
+
     /** 事件编号,和系统流体云给这件事的编号一样:服务号|服务实例|用户|服务时间戳 */
     fun keyOf(service: Any, user: Int): String? {
         val serviceId = OfficialCloudReflection.text(OfficialCloudReflection.call(service, "getServiceId")).takeIf { it.isNotBlank() } ?: return null

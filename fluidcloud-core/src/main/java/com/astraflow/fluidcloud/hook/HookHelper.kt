@@ -39,6 +39,16 @@ object HookHelper {
 
     fun hookMethodBefore(method: Method, callback: (Chain) -> Any?): HookHandle? = hookExecutable(method, beforeCallback = callback)
 
+    /**
+     * 装一个自带的钩子(钩子本体由调用方构造,回放经它再调一次原方法);异常一律接住,不传给被挂的方法。
+     */
+    fun hookWithHooker(method: Method, hooker: Hooker): HookHandle? {
+        val xi = xposedInterface ?: run { Logger.e(TAG, "hookWithHooker: xposedInterface is null"); return null }
+        return runCatching {
+            xi.hook(method).setExceptionMode(ExceptionMode.PROTECTIVE).intercept(hooker)
+        }.onFailure { Logger.e(TAG, "hookWithHooker failed: ${method.declaringClass.name}", it) }.getOrNull()
+    }
+
     fun hookMethodAfter(method: Method, callback: (Chain, Any?) -> Any?): HookHandle? = hookExecutable(method, afterCallback = callback)
 
     /** 修改本次调用参数,不修改系统持有的原始数据;原方法执行失败仍由原调用方处理。 */

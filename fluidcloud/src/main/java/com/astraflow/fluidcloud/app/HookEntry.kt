@@ -4,6 +4,7 @@ import android.app.Application
 import com.astraflow.fluidcloud.AdapterBridge
 import com.astraflow.fluidcloud.BuildConfig
 import com.astraflow.fluidcloud.FluidCloudSettings
+import com.astraflow.fluidcloud.OfficialCloudGate
 import com.astraflow.fluidcloud.OfficialCloudHook
 import com.astraflow.fluidcloud.OfficialCloudSource
 import com.astraflow.fluidcloud.hook.CrashGuard
@@ -90,8 +91,12 @@ class HookEntry : XposedModule() {
             }
             return
         }
-        val remote = SystemUiSettings(this, app) { OfficialCloudSource.onSettingsChanged(it) }
+        val remote = SystemUiSettings(this, app) {
+            OfficialCloudGate.onSettings(it.access)
+            OfficialCloudSource.onSettingsChanged(it)
+        }
         settings = remote
+        OfficialCloudGate.onSettings(remote.current().access)
         OfficialCloudSource.bind(app, remote.current(), BuildConfig.APPLICATION_ID, BuildConfig.VERSION_CODE.toLong(),
             reportStatus = { SystemUiStatus.report(PluginStatus.KEY_CAPSULE, it) },
             reportIsland = { SystemUiStatus.report(PluginStatus.KEY_ISLAND, it) })
