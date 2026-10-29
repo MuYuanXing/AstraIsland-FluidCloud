@@ -226,12 +226,16 @@ object OfficialCloudReflection {
         val entry = entranceCode(entrance)
         // 卡片引擎可能比内容晚建好:稍后补读时再从系统卡片身上取一次
         val seedling = model.seedling ?: call(model.card, "getInnerCard")
-        // 卡片数据:记录上那份读不到时,用卡片引擎自己持有的那一份;提供方还没送数据时,和卡片引擎一样用发起时带来的初始数据;
-        // 系统界面自己做的提示(手电筒、勿扰、响铃模式)这几处都没有,用系统界面生成提示时的那一份
+        // 卡片数据:记录上那份读不到时,用卡片引擎自己持有的那一份;系统界面自己做的提示(手电筒、勿扰、响铃模式)
+        // 这几处都没有,用系统界面生成提示时的那一份;最后才是发起时带来的初始数据。
+        // 顺序不能反:系统界面的提示每生成一次都记着当前这一份(手电筒开、关各一份),
+        // 发起时带来的初始数据是卡片创建那一刻的,之后一直不变——先取它就会让整张卡片停在创建时的状态
+        // (手电筒的胶囊左图永远显示开启那张)。
         val sent = (call(ui, "getData") as? ByteArray)?.takeIf { it.isNotEmpty() }
             ?: (call(call(seedling, "getUIData"), "getData") as? ByteArray)?.takeIf { it.isNotEmpty() }
-        val initial = if (sent == null) initData(service) else null
-        val raw = sent ?: initial ?: OfficialCloudSystemTips.data(serviceId)
+        val tip = if (sent == null) OfficialCloudSystemTips.data(serviceId) else null
+        val initial = if (sent == null && tip == null) initData(service) else null
+        val raw = sent ?: tip ?: initial
         // 初始数据是服务发起那一刻写下的(服务时间戳是墙上时钟):按那一刻算收到的时间,稍后重读时倒计时不从头算
         val nowElapsed = android.os.SystemClock.elapsedRealtime()
         val wallNow = System.currentTimeMillis()
