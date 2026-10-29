@@ -31,7 +31,9 @@
       { "id": "templateVersion", "type": "text", "meaning": "原版模板的精确版本目录名" },
       { "id": "templatePageId", "type": "text", "meaning": "来源指定的模板页;为空时使用模板默认页" },
       { "id": "templateData", "type": "object", "meaning": "来源送来的原始模板数据;内容不转换为旧卡片字段" },
-      { "id": "templateDir", "type": "text", "meaning": "原版模板所在文件夹的绝对路径(系统界面自己的存储);星河岛按它直接读取模板并决定是否按模板显示,接入件不传递模板文件" }
+      { "id": "templateDir", "type": "text", "meaning": "原版模板所在文件夹的绝对路径(系统界面自己的存储);星河岛按它直接读取模板并决定是否按模板显示,接入件不传递模板文件" },
+      { "id": "templateImages", "type": "images", "limits": { "maxImages": 32, "maxImageBytes": 1048576, "maxTotalBytes": 8388608 }, "meaning": "原版模板用的图(不是系统卡片右侧的图片来源):名字 → 图片字节。模板数据里图片地址写 host-images/名字 时按名字取这里的字节;最多 32 张、单张 1 MB、合计 8 MB,超出的这次不交" },
+      { "id": "templateImageOwner", "type": "package", "meaning": "templateImages 里 content:// 共享位置的照片属于哪个应用(记录与诊断用);图片已由接入件读成字节交来,星河岛不自行读 content://;没有共享位置照片时为空" }
     ]
   },
   "kinds": [
