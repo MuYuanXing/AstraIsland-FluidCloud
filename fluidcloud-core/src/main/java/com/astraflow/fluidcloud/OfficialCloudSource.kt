@@ -102,7 +102,10 @@ object OfficialCloudSource {
                 // 云卡到货诊断:每类新签名写一行(正式包可见),卡片有没有来、排好没有、带不带按钮、数据与模板读到没有一眼可知。
                 for (record in records) {
                     val s = record.snapshot
-                    val sig = "${s.serviceId}|${s.packageName}|${s.entrance}|${s.rendered}|${record.content.title.take(20)}|${record.content.buttons.size}|${record.content.complete}"
+                    // 手电筒这类开关卡:开/关状态与两个开关图的取值写进签名和同一行日志——每换一态各写一行,
+                    // 用户在系统里关掉手电筒后看最近一行就知道岛收到的数据是什么(正式包也写)。
+                    val switchValues = SWITCH_DIAG_KEYS.mapNotNull { key -> s.data[key]?.let { "$key=${it.take(80)}" } }
+                    val sig = "${s.serviceId}|${s.packageName}|${s.entrance}|${s.rendered}|${record.content.title.take(20)}|${record.content.buttons.size}|${record.content.complete}|${switchValues.joinToString(",")}"
                     if (diagSignatures.add(sig)) {
                         if (diagSignatures.size > 256) diagSignatures.clear()
                         com.astraflow.fluidcloud.hook.Log.i(TAG, "cloud record: svc=${s.serviceId} pkg=${s.packageName} entry=${s.entrance} rendered=${s.rendered} " +
@@ -110,6 +113,7 @@ object OfficialCloudSource {
                             "buttons=${record.content.buttons.map { "${it.label}:${it.action?.method ?: if (it.pending != null) "pending" else "view"}" }} " +
                             "complete=${record.content.complete} gaps=${record.content.gaps} data=${s.data.keys.take(24)} version=${s.templateVersion} page=${s.pageId} " +
                             "card=${s.nativeCard != null}/${s.nativeSeedling != null} nv=${s.nativeViews.values.sumOf { it.size }}" +
+                            (if (switchValues.isNotEmpty()) " switch=" + switchValues.joinToString(",") else "") +
                             // 图读不到时写下图片字段的值(只取前 60 个字),看得出系统给的是网址、文件还是别的
                             (if ("image-unavailable" in record.content.gaps) " images=" + s.data.filterKeys { k -> IMAGE_FIELD.containsMatchIn(k) }
                                 .entries.take(4).joinToString(",") { (k, v) -> "$k=${v.take(60)}" } else ""))
@@ -408,6 +412,9 @@ object OfficialCloudSource {
 
     /** 卡片数据里放图片的字段名(诊断用) */
     private val IMAGE_FIELD = Regex("(?i)(icon|image|img|logo|pic)")
+
+    /** 开关卡的诊断字段(手电筒):开没开、胶囊与卡片上那张开关图的取值 */
+    private val SWITCH_DIAG_KEYS = listOf("isOpen", "smLightSwitchImg", "lgLightSwitchImg")
 
     fun resetForTest() {
         AdapterBridge.stop()
