@@ -286,11 +286,13 @@ object OfficialCloudSource {
         // (现行规则「系统事件接入」);读不到模板时代号一律当空。服务意图用来认换了新服务号的老服务(现行规则「展开卡片总表」)
         val intent = context?.takeIf { !raw.serviceId.startsWith("common:") }
             ?.let { OfficialCloudTemplates.intentAction(it, raw.serviceId, raw.templateVersion) }.orEmpty()
+        // 原版模板用的图:数据里是图的字段换成 host-images/名字 的记号,图按契约上限另交(共享位置的照片翻译时再读)
+        val picked = if (templateDir.isEmpty()) null else OfficialCloudTemplateImages.pick(raw.data, raw.images)
         val snapshot = raw.copy(data = template?.scope(raw.data) ?: CloudTemplate.stripKeys(raw.data), intentAction = intent,
-            templateDir = templateDir, templateData = raw.data)
+            templateDir = templateDir, templateData = picked?.data ?: raw.data)
         val content = OfficialCloudDecoder.decode(snapshot, template) ?: CloudContent("", "", "", gaps = setOf("content-unavailable"))
         val refined = OfficialCloudServices.refine(snapshot, content, SystemClock.elapsedRealtime())
-        return CloudRecord(snapshot.copy(root = null, images = emptyMap()), refined)
+        return CloudRecord(snapshot.copy(root = null, images = emptyMap()), refined, picked?.images.orEmpty(), picked?.owner)
     }
 
     fun acceptCaptured(owner: String, revision: Long, change: CloudChange, records: List<CloudRecord>, removed: Set<String> = emptySet()) {

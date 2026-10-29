@@ -38,6 +38,8 @@ object OfficialCloudTranslator {
         val pictures = Pictures()
         val data = snapshot.data
         val template = snapshot.templateDir.isNotEmpty()
+        // 模板用的图:字节原样交,共享位置的照片此刻读好了才交(读不好就是缺图,与外部接入一致)
+        val templateImages = if (template) OfficialCloudTemplateImages.event(record.templateImages) else emptyMap()
         return SystemEvent(
             identity = snapshot.key,
             userId = snapshot.userId,
@@ -51,6 +53,8 @@ object OfficialCloudTranslator {
             templatePageId = if (template) snapshot.pageId else "",
             templateData = if (template) snapshot.templateData else emptyMap(),
             templateDir = snapshot.templateDir,
+            templateImages = templateImages,
+            templateImageOwner = if (template) record.templateImageOwner else null,
             lockScreen = snapshot.lockScreenAllowed,
             alert = OfficialCloudServices.alert(snapshot),
             instant = OfficialCloudServices.instant(snapshot),

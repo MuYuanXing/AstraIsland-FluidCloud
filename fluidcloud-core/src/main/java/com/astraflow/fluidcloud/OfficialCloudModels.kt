@@ -272,4 +272,23 @@ data class CloudContent(
 )
 
 enum class CloudChange { REPLACE, POST, REMOVE }
-data class CloudRecord(val snapshot: CloudSnapshot, val content: CloudContent)
+
+/**
+ * 原版模板用的图(contracts/island-system-events.v1.json 的 templateImages):接入件读好的字节,或放在来源应用
+ * 共享位置的照片(由接入件读成字节后交,读不到就是缺图)。
+ */
+sealed interface TemplateImage {
+    class Bytes(val bytes: ByteArray) : TemplateImage
+    class Shared(val image: CloudImage) : TemplateImage
+}
+
+/**
+ * 一条系统记录:快照(数据、模板位置)、按旧画法翻好的通用内容,以及模板用的图(名字 → 图来源)。
+ * 图在翻译成标准事件时才换成字节:共享位置的照片可能晚一点才读好,届时会重新翻译。
+ */
+data class CloudRecord(
+    val snapshot: CloudSnapshot,
+    val content: CloudContent,
+    val templateImages: Map<String, TemplateImage> = emptyMap(),
+    val templateImageOwner: String? = null,
+)

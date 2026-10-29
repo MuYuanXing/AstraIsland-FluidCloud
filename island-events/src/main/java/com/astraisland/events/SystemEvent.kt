@@ -30,6 +30,13 @@ data class SystemEvent(
     val templateData: Map<String, String> = emptyMap(),
     /** 原版模板所在文件夹的绝对路径(系统界面自己的存储);星河岛按它直接读取模板,为空时没有可用的原版模板 */
     val templateDir: String = "",
+    /**
+     * 原版模板用的图(不是系统卡片右侧的图片来源):名字 → 图片字节。模板数据里图片地址写 host-images/名字 时
+     * 按名字取这里的字节。最多 32 张、单张 1 MB、合计 8 MB,超出的不交。
+     */
+    val templateImages: Map<String, ByteArray> = emptyMap(),
+    /** [templateImages] 里 content:// 共享位置的照片属于哪个应用(记录与诊断用;图片已由接入件读成字节交来);没有共享位置照片时为空 */
+    val templateImageOwner: String? = null,
     /** 系统允许在锁屏显示 */
     val lockScreen: Boolean = false,
     /** 这一版要不要自动展开卡片 */

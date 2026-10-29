@@ -48,6 +48,8 @@ object SystemEventCodec {
         putString("templatePageId", e.templatePageId)
         putBundle("templateData", Bundle().apply { e.templateData.forEach { (key, value) -> putString(key, value) } })
         putString("templateDir", e.templateDir)
+        putBundle("templateImages", Bundle().apply { e.templateImages.forEach { (name, bytes) -> putByteArray(name, bytes) } })
+        putString("templateImageOwner", e.templateImageOwner)
         putBoolean("lockScreen", e.lockScreen)
         putString("alert", e.alert.id)
         putString("instant", e.instant.id)
@@ -92,6 +94,10 @@ object SystemEventCodec {
         templatePageId = b.getString("templatePageId").orEmpty(),
         templateData = b.getBundle("templateData")?.let { data -> data.keySet().associateWith { data.getString(it).orEmpty() } }.orEmpty(),
         templateDir = b.getString("templateDir").orEmpty(),
+        templateImages = b.getBundle("templateImages")?.let { images ->
+            images.keySet().associateWith { name -> images.getByteArray(name) ?: ByteArray(0) }
+        }.orEmpty(),
+        templateImageOwner = b.getString("templateImageOwner"),
         lockScreen = b.getBoolean("lockScreen"),
         alert = Alert.of(b.getString("alert")) ?: Alert.NONE,
         instant = Instant.of(b.getString("instant")) ?: Instant.NO,
