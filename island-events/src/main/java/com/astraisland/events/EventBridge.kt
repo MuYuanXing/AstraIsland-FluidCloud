@@ -8,13 +8,13 @@ import java.util.function.Function
  * 两边的类互不相认,各在 System.getProperties() 里放一个处理包裹的函数(系统自带的 Function,收发 Bundle)。
  * 接入件到了或星河岛到了,接入件向星河岛打招呼(带包名、版本);星河岛核对通过才收它的事件。
  *
- * - 接入件 → 星河岛:[OP_HELLO] 打招呼,[OP_EVENTS] 全部事件和接入件的设置。
+ * - 接入件 → 星河岛:[OP_HELLO] 打招呼,[OP_EVENTS] 全部事件和接入件的设置,[OP_DISCONNECT] 当前会话退出。
  * - 星河岛 → 接入件:[OP_READY] 星河岛到了,[OP_STATE] 星河岛接手了哪些事,[OP_PERFORM] 点按钮或卡片,
  *   [OP_OPENED] 刚才那一下打开了页面没有。
  */
 object EventBridge {
     /** 见面与交换的版本;两边不一样时不交换 */
-    const val VERSION = 2
+    const val VERSION = 5
 
     /** System.getProperties() 里放两边入口的键 */
     const val ISLAND = "com.astraisland.events.island"
@@ -39,12 +39,32 @@ object EventBridge {
     const val KEY_ACCEPTED = "accepted"
     const val KEY_REASON = "reason"
     const val KEY_LOCAL_TEST = "localTest"
-    /** 全部事件([KEY_EVENTS],编码见 SystemEventCodec)和接入件的设置([KEY_SETTINGS]) */
+    /** 全部事件([KEY_EVENTS],编码见 SystemEventCodec)和接入件的设置([KEY_SETTINGS]);带 [KEY_SESSION],在系统界面主线程上同步交出 */
     const val OP_EVENTS = "events"
+    /** 当前会话退出:星河岛先同步撤下旧事件、确认与归属并失效该会话,接入件随后恢复原生显示。 */
+    const val OP_DISCONNECT = "disconnect"
     const val KEY_EVENTS = "events"
     const val KEY_SETTINGS = "settings"
     /** 系统尚未结束的事件身份,不以本次是否读到可显示内容判断结束。 */
     const val KEY_ALIVE = "alive"
+    /**
+     * 原版模板的按钮([OP_PERFORM] 里):页名、动作名,以及星河岛按当前数据代入好的动作 [KEY_TEMPLATE_RESOLVED]
+     * (按顺序试的几种做法,每种一个 Bundle,键见 [ACTION_TYPE] 等)。接入件不读模板,只核对后执行。
+     */
+    const val KEY_TEMPLATE_PAGE = "templatePageId"
+    const val KEY_TEMPLATE_ACTION = "templateActionName"
+    const val KEY_TEMPLATE_RESOLVED = "templateAction"
+    const val ACTION_TYPE = "type"
+    const val ACTION_URI = "uri"
+    const val ACTION_METHOD = "method"
+    const val ACTION_PARAMS = "params"
+    const val ACTION_DATA = "data"
+    const val ACTION_FLAG = "flag"
+    const val ACTION_PACKAGE = "package"
+    /** 接入件每次启动重新生成的会话标识;不能靠序号跨启动比大小。 */
+    const val KEY_SESSION = "session"
+    /** 接手决定([OP_STATE])的递增序号;同步答复回显同一序号,处理决定时重入的旧答复不生效。 */
+    const val KEY_EPOCH = "epoch"
     /** 接手决定的同步答复:原生显示交接已执行的事件身份。未确认的事件继续由系统显示。 */
     const val KEY_CONFIRMED = "confirmed"
 
@@ -63,6 +83,8 @@ object EventBridge {
     const val KEY_ALWAYS = "always"
     const val KEY_ACTIVE = "active"
     const val KEY_YIELD_ALLOWED = "yieldAllowed"
+    /** 星河岛撤销当前会话:接入件先恢复原生显示,再使本次握手失效。 */
+    const val KEY_RELEASE = "release"
     /** 点按钮或卡片:[KEY_IDENTITY]、[KEY_ACTION](按钮编号,点卡片时不填);回 [KEY_DONE] */
     const val OP_PERFORM = "perform"
     /** 刚才按的那颗按钮这一下打开了页面没有:[KEY_IDENTITY]、[KEY_ACTION];回 [KEY_DONE] */

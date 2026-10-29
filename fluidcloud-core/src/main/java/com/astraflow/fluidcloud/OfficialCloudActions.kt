@@ -165,6 +165,15 @@ class OfficialCloudActions(
     /** 按登记的动作执行;登记了几种做法时按顺序试,前一种打不开再用下一种(与系统卡片引擎一致)。 */
     fun execute(record: CloudRecord, action: CloudAction): Boolean = executeWay(record, action) != null
 
+    /** 模板按钮复用系统动作执行通道;锁屏、事件退出或页面变化后不能继续操作。 */
+    fun executeTemplate(record: CloudRecord, action: CloudAction, pageId: String, actionName: String): Boolean {
+        if (!OfficialCloudSource.islandActive || keyguard?.isDeviceLocked != false) return false
+        lastPress = null
+        val way = executeWay(record, action) ?: return false
+        lastPress = "${record.snapshot.key}|template:$pageId:$actionName" to (way.type == CloudTemplate.TYPE_DEEPLINK)
+        return true
+    }
+
     /** 按顺序试登记的几种做法,返回实际用上的那一种;都不行返回 null。 */
     private fun executeWay(record: CloudRecord, action: CloudAction): CloudAction? =
         (listOf(action) + action.alternatives).firstOrNull { way -> executeOne(record, way) }

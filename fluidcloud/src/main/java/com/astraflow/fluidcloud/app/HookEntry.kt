@@ -6,6 +6,7 @@ import com.astraflow.fluidcloud.BuildConfig
 import com.astraflow.fluidcloud.FluidCloudSettings
 import com.astraflow.fluidcloud.OfficialCloudGate
 import com.astraflow.fluidcloud.OfficialCloudHook
+import com.astraflow.fluidcloud.OfficialCloudNotificationGate
 import com.astraflow.fluidcloud.OfficialCloudSource
 import com.astraflow.fluidcloud.hook.CrashGuard
 import com.astraflow.fluidcloud.hook.HookHelper
@@ -55,6 +56,10 @@ class HookEntry : XposedModule() {
             runCatching { loadCodeSearch() }.onFailure { Log.e(TAG, "code search library not loaded", it) }
             runCatching { PluginClassLoaderInterceptor.register(loader) }.onFailure { Log.e(TAG, "plugin class loader interception failed", it) }
             runCatching { OfficialCloudHook.register() }.onFailure { Log.e(TAG, "fluid cloud hooks failed", it) }
+            // 通知命令的汇合点在主 apk 里(OplusLiveAlertNotificationsInteractor.notifyLiveAlerts),经宿主类加载器装闸门;
+            // C15 没有这个族,认不出时不装,系统流体云照常由系统显示
+            runCatching { OfficialCloudNotificationGate.install(loader, param.applicationInfo.sourceDir) }
+                .onFailure { Log.e(TAG, "notification command gate failed", it) }
         }
         runCatching { hookApplication(loader) }.onFailure { Log.e(TAG, "SystemUI application hook failed", it) }
     }
@@ -93,10 +98,12 @@ class HookEntry : XposedModule() {
         }
         val remote = SystemUiSettings(this, app) {
             OfficialCloudGate.onSettings(it.access)
+            OfficialCloudNotificationGate.onSettings(it.access)
             OfficialCloudSource.onSettingsChanged(it)
         }
         settings = remote
         OfficialCloudGate.onSettings(remote.current().access)
+        OfficialCloudNotificationGate.onSettings(remote.current().access)
         OfficialCloudSource.bind(app, remote.current(), BuildConfig.APPLICATION_ID, BuildConfig.VERSION_CODE.toLong(),
             reportStatus = { SystemUiStatus.report(PluginStatus.KEY_CAPSULE, it) },
             reportIsland = { SystemUiStatus.report(PluginStatus.KEY_ISLAND, it) })

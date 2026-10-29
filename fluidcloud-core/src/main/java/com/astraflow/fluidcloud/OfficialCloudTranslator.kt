@@ -37,6 +37,7 @@ object OfficialCloudTranslator {
         val kind = OfficialCloudServices.kind(snapshot)
         val pictures = Pictures()
         val data = snapshot.data
+        val template = snapshot.templateDir.isNotEmpty()
         return SystemEvent(
             identity = snapshot.key,
             userId = snapshot.userId,
@@ -45,6 +46,11 @@ object OfficialCloudTranslator {
             packageName = snapshot.packageName,
             sourcePackage = OfficialCloudServices.sourcePackage(snapshot),
             serviceName = OfficialCloudServices.serviceName(snapshot),
+            serviceId = if (template) snapshot.serviceId else "",
+            templateVersion = if (template) snapshot.templateVersion.toString() else "",
+            templatePageId = if (template) snapshot.pageId else "",
+            templateData = if (template) snapshot.templateData else emptyMap(),
+            templateDir = snapshot.templateDir,
             lockScreen = snapshot.lockScreenAllowed,
             alert = OfficialCloudServices.alert(snapshot),
             instant = OfficialCloudServices.instant(snapshot),
@@ -78,6 +84,7 @@ object OfficialCloudTranslator {
             switchState = OfficialCloudServices.switchState(snapshot),
             mediaPackage = if (kind == EventKind.MUSIC) OfficialCloudServices.mediaPackage(snapshot) else null,
             details = OfficialCloudServices.detailsRecipe(snapshot),
+            // 有原版模板时也照常给出通用卡片内容:用不用模板显示由星河岛决定
             card = card(content, kind, pictures),
         )
     }

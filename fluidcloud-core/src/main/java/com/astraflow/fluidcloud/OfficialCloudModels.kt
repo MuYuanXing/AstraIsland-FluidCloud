@@ -156,6 +156,13 @@ data class CloudSnapshot(
     val intentAction: String = "",
     /** 这一版数据要求胶囊抖一下(提供方送来的 shouldShake,只对里程碑、即时提醒事件有效,见 OPPO 文档 13330) */
     val shake: Boolean = false,
+    /**
+     * 这张卡片的原版模板所在文件夹(系统界面存储里与 [templateVersion] 同名的版本目录);没有对得上的版本时为空。
+     * 星河岛按它直接读模板、决定是否按模板显示,接入件不传模板文件。
+     */
+    val templateDir: String = "",
+    /** 提供方送来的原始数据(未并入模板默认内容、未翻译代号),交给星河岛按模板代入 */
+    val templateData: Map<String, String> = emptyMap(),
 ) {
     /**
      * 事件身份,与系统流体云给这件事的编号一致(服务号、服务实例、用户、服务的时间戳,时间戳标识服务的一次生命周期)。

@@ -80,4 +80,13 @@ class OfficialCloudStore {
     fun previous(owner: String, nativeKey: String): CloudRecord? = owners[owner]?.entries?.get(nativeKey)
     fun nativeKeys(key: String): Set<String> = owners.values.flatMap { it.entries.values }.filter { it.snapshot.key == key }
         .mapTo(linkedSetOf()) { it.snapshot.nativeKey }
+
+    /** 通知变成的胶囊(不是系统服务推送的卡片)的记录编号;接入开且岛在时这些不等接手确认就先藏 */
+    fun commonNativeKeys(): Set<String> = owners.values.flatMap { it.entries.values }
+        .filter { it.snapshot.serviceId.startsWith("common:") && it.snapshot.key !in ended }
+        .mapTo(linkedSetOf()) { it.snapshot.nativeKey }
+
+    /** 这条记录的事件种类(分类开关判定用);读不出时为空 */
+    fun kindOf(nativeKey: String): com.astraisland.events.EventKind? = owners.values.flatMap { it.entries.values }
+        .firstOrNull { it.snapshot.nativeKey == nativeKey }?.let { OfficialCloudServices.kind(it.snapshot) }
 }

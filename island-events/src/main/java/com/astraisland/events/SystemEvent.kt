@@ -23,6 +23,13 @@ data class SystemEvent(
     val sourcePackage: String,
     /** 系统服务的名字(例如「手电筒」);系统界面托管的服务不写「系统界面」;读不到时为空 */
     val serviceName: String = "",
+    /** 使用原版模板的服务身份、版本、页面和原始数据;内容不再转换为旧卡片字段。 */
+    val serviceId: String = "",
+    val templateVersion: String = "",
+    val templatePageId: String = "",
+    val templateData: Map<String, String> = emptyMap(),
+    /** 原版模板所在文件夹的绝对路径(系统界面自己的存储);星河岛按它直接读取模板,为空时没有可用的原版模板 */
+    val templateDir: String = "",
     /** 系统允许在锁屏显示 */
     val lockScreen: Boolean = false,
     /** 这一版要不要自动展开卡片 */

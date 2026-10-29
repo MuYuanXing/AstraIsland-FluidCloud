@@ -49,7 +49,7 @@ object OfficialCloudGate {
     /** 接收对象由系统持有;弱键弱引用,它没了这份也不用补 */
     private val missed = WeakHashMap<Any, Missed>()
 
-    /** before 环节的裁决:返回非空表示截住本次调用(不调原方法)。 */
+    /** before 环节的裁决:返回非空表示截住本次调用(不调原方法),非空值即替原方法返回的结果(boolean 回「已消费」)。 */
     fun decide(chain: XposedInterface.Chain): Any? {
         val method = chain.executable as? Method ?: return null
         val target = chain.thisObject ?: return null
@@ -144,9 +144,13 @@ object OfficialCloudGate {
         if (tripped) synchronized(missed) { missed.keys.toList() }.forEach(::handBack)
     }
 
-    /** 截住时替原方法返回的结果:void 与引用类型给 Unit(框架只认非空才跳过原方法),基本类型给默认值 */
+    /**
+     * 截住时替原方法返回的结果。onReceiveUIData 的 boolean 是「消费掉」语义(C15/C16/C17 三代一致):
+     * 截住时回已消费(true),上游不再走别的投递路径重发;
+     * 其余形状给中性默认值(框架只认非空才跳过原方法)。
+     */
     private fun Method.defaultResult(): Any = when (returnType) {
-        java.lang.Boolean.TYPE -> false
+        java.lang.Boolean.TYPE -> true
         java.lang.Character.TYPE -> ' '
         java.lang.Byte.TYPE -> 0.toByte()
         java.lang.Short.TYPE -> 0.toShort()

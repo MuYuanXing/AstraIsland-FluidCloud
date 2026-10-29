@@ -27,6 +27,10 @@ object OfficialCloudSource {
     private var reportStatus: (String) -> Unit = {}
     private val reportedGaps = linkedSetOf<String>()
     private val diagSignatures = linkedSetOf<String>()
+    private class Translated(val snapshot: CloudSnapshot, val content: CloudContent, val openable: Boolean, val imageRevision: Long, val event: SystemEvent)
+    private val translated = HashMap<String, Translated>()
+    private val applyingIslandState = ThreadLocal.withInitial { false }
+    private var displayRefreshPosted = false
 
     /** 星河岛开着且在管事(星河岛报来的;没连上时为假):按钮只在这时执行 */
     @Volatile var islandActive = false
@@ -154,6 +158,61 @@ object OfficialCloudSource {
     /** 当前藏起的系统胶囊个数(诊断用)。 */
     fun hiddenCount(): Int = OfficialCloudYield.yieldedCount()
     fun requestedNativeKeys(): Set<String> = (nativeClaims + alwaysClaims + spentClaims).filterTo(linkedSetOf(), ::suppressesNative)
+
+    /**
+     * 通知变成的胶囊在接入开且星河岛已连时先藏(现行规则「系统事件接入」):这类事件没有系统数据入口,
+     * 等接手确认再藏会先漏出原生胶囊;岛不在、没收下或接入关时集合为空,全部交还系统。
+     */
+    fun prehiddenNativeKeys(): Set<String> =
+        if (settings.access && islandActive && AdapterBridge.connected()) store.commonNativeKeys() else emptySet()
+
+    /**
+     * 出口默认拦截的总开关(现行规则「系统事件接入」):记录要上屏必须进显示列表,接入开且星河岛在管事、
+     * 此刻能露面时状态栏列表默认全部隐藏——不论记录从哪条数据门进来,未知的门也一并盖住。
+     * 接入关闭、星河岛不在、息屏等不露面的时刻全部交还系统(与接手让位同一露面条件)。
+     */
+    fun exitBlocking(): Boolean = settings.access && islandActive && AdapterBridge.connected() && yieldAllowed
+
+    /** 出口上截下的记录就地读取;同一条重复进列表不重送,解析不了的数据只记一行日志。 */
+    fun receiveFromDisplay(model: Any) {
+        main.post {
+            runCatching {
+                val raw = OfficialCloudReflection.fields(model.javaClass).mapNotNull { field ->
+                    runCatching { field.isAccessible = true; field.get(model) }.getOrNull()
+                }.firstOrNull { it !== model && OfficialCloudReflection.call(it, "getSourceType") != null } ?: model
+                if (OfficialCloudReflection.nativeKey(raw) == null) return@post
+                val record = capture(raw, OfficialCloudHook.nextRevision(), reviewedPlugin = false) ?: run {
+                    if (notedUnreadable.add(raw.javaClass.name)) com.astraflow.fluidcloud.hook.Log.w(TAG,
+                        "display-exit record unreadable on ${raw.javaClass.name}; hidden without reading")
+                    return@post
+                }
+                acceptCaptured("display-exit", OfficialCloudHook.nextRevision(), CloudChange.REPLACE, listOf(record))
+            }.onFailure { reportFailure("display-exit", it, OfficialCloudReflection.describe(model)) }
+        }
+    }
+
+    private val notedUnreadable = linkedSetOf<String>()
+
+    /**
+     * 这一类内容此刻归不归星河岛接(与星河岛四类开关同义):分类关闭的事件不上岛,
+     * 出口默认拦截对它们放行,交还系统显示。
+     */
+    fun kindAllowed(nativeKey: String): Boolean {
+        val kind = store.kindOf(nativeKey) ?: return true
+        return when (kind) {
+            EventKind.CALL, EventKind.SATELLITE_CALL -> settings.call
+            EventKind.TIMER, EventKind.STOPWATCH, EventKind.ALARM, EventKind.FLASH_ALARM,
+            EventKind.GAME_TIMER, EventKind.GAME_COUNTDOWN -> settings.timer
+            EventKind.SCREEN_RECORDING, EventKind.SOUND_RECORDING, EventKind.RECORDING_SAVED,
+            EventKind.MICROPHONE_SERVICE, EventKind.SYSTEM_SWITCH, EventKind.TASK_PROGRESS,
+            EventKind.ORDER_PROGRESS, EventKind.PARCEL_PICKUP, EventKind.RIDE, EventKind.NAVIGATION,
+            EventKind.TRAFFIC_LIGHT, EventKind.REMINDER, EventKind.APP_NOTICE, EventKind.UNLISTED,
+            EventKind.MUSIC -> settings.live
+            EventKind.CHARGING, EventKind.BATTERY_TIP, EventKind.DEVICE -> settings.status
+            else -> settings.live
+        }
+    }
+
     fun aliveNativeKeys(): Set<String> = store.aliveNativeKeys()
     fun confirmedIdentities(): Set<String> {
         val done = OfficialCloudYield.confirmedKeys()
@@ -211,6 +270,11 @@ object OfficialCloudSource {
     /** 读一条系统记录:数据、模板(按钮登记的动作)、通用内容,再按服务整理。 */
     private fun capture(model: Any, revision: Long, reviewedPlugin: Boolean): CloudRecord? {
         val raw = OfficialCloudReflection.snapshot(model, revision, reviewedPlugin) ?: return null
+        // 原版模板的位置与原始数据一并交给星河岛:用不用模板显示由星河岛决定(版本目录必须与数据的模板版本一致)
+        val templateDir = context?.takeIf { !raw.serviceId.startsWith("common:") }?.let { ctx ->
+            OfficialCloudTemplates.directory(OfficialCloudTemplates.root(ctx), raw.serviceId, raw.templateVersion)
+                ?.takeIf { raw.templateVersion <= 0 || it.name == raw.templateVersion.toString() }?.absolutePath
+        }.orEmpty()
         val template = context?.takeIf { !raw.serviceId.startsWith("common:") }?.let {
             OfficialCloudTemplates.current(it, raw.serviceId, raw.templateVersion, raw.pageId)
         }
@@ -218,7 +282,8 @@ object OfficialCloudSource {
         // (现行规则「系统事件接入」);读不到模板时代号一律当空。服务意图用来认换了新服务号的老服务(现行规则「展开卡片总表」)
         val intent = context?.takeIf { !raw.serviceId.startsWith("common:") }
             ?.let { OfficialCloudTemplates.intentAction(it, raw.serviceId, raw.templateVersion) }.orEmpty()
-        val snapshot = raw.copy(data = template?.scope(raw.data) ?: CloudTemplate.stripKeys(raw.data), intentAction = intent)
+        val snapshot = raw.copy(data = template?.scope(raw.data) ?: CloudTemplate.stripKeys(raw.data), intentAction = intent,
+            templateDir = templateDir, templateData = raw.data)
         val content = OfficialCloudDecoder.decode(snapshot, template) ?: CloudContent("", "", "", gaps = setOf("content-unavailable"))
         val refined = OfficialCloudServices.refine(snapshot, content, SystemClock.elapsedRealtime())
         return CloudRecord(snapshot.copy(root = null, images = emptyMap()), refined)
@@ -249,6 +314,17 @@ object OfficialCloudSource {
     /** 星河岛上点了按钮([buttonId])或卡片([buttonId] 为空):按系统登记的动作交回系统执行;送达返回真 */
     fun perform(identity: String, buttonId: String?): Boolean = actions?.perform(identity, buttonId) == true
 
+    /**
+     * 原版模板的按钮动作:星河岛已按这张卡片当前的数据代入好([action]),这里只核对是当前活动、当前页面,再执行。
+     */
+    fun performTemplate(identity: String, pageId: String, actionName: String, action: CloudAction): Boolean {
+        val record = store.active().firstOrNull { it.snapshot.key == identity } ?: return false
+        fun page(value: String) = value.removePrefix("/").removePrefix("pages/").removeSuffix(".json")
+        val currentPage = page(record.snapshot.pageId)
+        if (currentPage.isNotEmpty() && currentPage != page(pageId)) return false
+        return actions?.executeTemplate(record, action, pageId, actionName) == true
+    }
+
     /** 刚才按的那颗按钮这一下打开了页面没有 */
     fun openedPage(identity: String, buttonId: String): Boolean = actions?.openedPage(identity, buttonId) == true
 
@@ -257,11 +333,21 @@ object OfficialCloudSource {
         if (context == null) return
         runCatching {
             val records = store.active()
+            val imageRevision = OfficialCloudSharedImages.revision
             val events = ArrayList<SystemEvent>(records.size)
+            val liveTranslations = HashSet<String>(records.size)
             for (record in records) {
+                val nativeKey = record.snapshot.nativeKey
+                liveTranslations += nativeKey
                 val openable = actions?.update(record) == true
-                val event = runCatching { OfficialCloudTranslator.translate(record, openable) }
-                    .onFailure { reportFailure("translate", it, record.snapshot.serviceId) }.getOrNull() ?: continue
+                val cached = translated[nativeKey]?.takeIf {
+                    it.snapshot === record.snapshot && it.content === record.content && it.openable == openable &&
+                        it.imageRevision == imageRevision
+                }
+                val event = cached?.event ?: runCatching { OfficialCloudTranslator.translate(record, openable) }
+                    .onFailure { reportFailure("translate", it, record.snapshot.serviceId) }.getOrNull()?.also {
+                        translated[nativeKey] = Translated(record.snapshot, record.content, openable, imageRevision, it)
+                    } ?: continue
                 events += event
                 noteLayout(record.snapshot, OfficialCloudServices.layout(record.snapshot), record)
                 val content = record.content
@@ -270,9 +356,14 @@ object OfficialCloudSource {
                     if (reportedGaps.size < 128 && reportedGaps.add(gapKey)) com.astraflow.fluidcloud.hook.Log.i(TAG, "service ${record.snapshot.serviceId} content gaps: ${content.gaps}")
                 }
             }
+            translated.keys.retainAll(liveTranslations)
             actions?.retain(records.mapTo(HashSet()) { it.snapshot.key })
             AdapterBridge.push(events, settings, store.aliveIdentities())
-            remapClaims()
+            // 预隐藏集合跟着数据走:通知胶囊新到、结束时重算显示交接,不依赖接手答复
+            val prehiddenNow = prehiddenNativeKeys()
+            val prehiddenChanged = prehiddenNow != prehiddenClaims
+            prehiddenClaims = prehiddenNow
+            if (remapClaims() || prehiddenChanged) OfficialCloudYield.resetRetries()
         }.onFailure { reportFailure("synchronize", it, null) }
     }
 
@@ -284,9 +375,21 @@ object OfficialCloudSource {
         alwaysIdentities = set(EventBridge.KEY_ALWAYS)
         islandActive = state.getBoolean(EventBridge.KEY_ACTIVE)
         yieldAllowed = state.getBoolean(EventBridge.KEY_YIELD_ALLOWED)
-        remapClaims()
-        OfficialCloudYield.refresh()
+        if (remapClaims()) OfficialCloudYield.resetRetries()
+        applyingIslandState.set(true)
+        try { OfficialCloudYield.refresh() } finally { applyingIslandState.set(false) }
     }
+
+    /** 显示管理对象在接手答复之外恢复或失效时，主动把现有事件再交一次，让岛重新核对实际确认。 */
+    fun onDisplayReconciled() {
+        if (applyingIslandState.get() == true || displayRefreshPosted) return
+        displayRefreshPosted = true
+        // 不在原生显示重算的调用栈里再次进入岛和桥接；恢复通知合并在下一轮主线程执行。
+        main.post { displayRefreshPosted = false; refresh() }
+    }
+
+    /** 最近一次 synchronize 算出的预隐藏集合;变了才让显示交接重算 */
+    private var prehiddenClaims: Set<String> = emptySet()
 
     /**
      * 星河岛报来的事件身份换成系统记录编号(系统记录会换,同一件事可能有几条);变了返回真。
@@ -312,10 +415,11 @@ object OfficialCloudSource {
         context = null
         settings = FluidCloudSettings()
         reportStatus = {}
-        store.clear(); reportedGaps.clear(); diagSignatures.clear()
+        store.clear(); reportedGaps.clear(); diagSignatures.clear(); translated.clear(); displayRefreshPosted = false
         islandActive = false; yieldAllowed = false
         handledIdentities = emptySet(); spentIdentities = emptySet(); alwaysIdentities = emptySet()
-        nativeClaims = emptySet(); spentClaims = emptySet(); alwaysClaims = emptySet()
+        nativeClaims = emptySet(); spentClaims = emptySet(); alwaysClaims = emptySet(); prehiddenClaims = emptySet()
+        notedUnreadable.clear()
         OfficialCloudImages.clear()
         OfficialCloudTemplates.clear()
         OfficialCloudSystemTips.clear()

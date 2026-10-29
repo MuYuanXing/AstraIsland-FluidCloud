@@ -26,7 +26,12 @@
       { "id": "complete", "type": "boolean", "meaning": "卡片内容读全了;读不全、同一件事的通知卡已在星河岛上时留通知卡" },
       { "id": "fingerprint", "type": "integer", "meaning": "这一版内容的指纹:内容变了指纹就变;只亮一下的提示按它认新的一次" },
       { "id": "details", "type": "enum", "values": ["movie", "scenic", "course"], "meaning": "要拆成并排几格的明细:电影(场次、影厅、座位)、景点门票(地址、可用时间)、课程(时间、节次、教室);不拆时不填" },
-      { "id": "card", "type": "card", "meaning": "卡片内容,见 card 一节" }
+      { "id": "card", "type": "card", "meaning": "卡片内容,见 card 一节" },
+      { "id": "serviceId", "type": "text", "meaning": "原版模板所属服务号;没有原版模板的内容为空" },
+      { "id": "templateVersion", "type": "text", "meaning": "原版模板的精确版本目录名" },
+      { "id": "templatePageId", "type": "text", "meaning": "来源指定的模板页;为空时使用模板默认页" },
+      { "id": "templateData", "type": "object", "meaning": "来源送来的原始模板数据;内容不转换为旧卡片字段" },
+      { "id": "templateDir", "type": "text", "meaning": "原版模板所在文件夹的绝对路径(系统界面自己的存储);星河岛按它直接读取模板并决定是否按模板显示,接入件不传递模板文件" }
     ]
   },
   "kinds": [
@@ -263,10 +268,25 @@
     ]
   },
   "bridge": {
-    "version": 2,
-    "description": "事件内容与事件存续分别传递;星河岛发送接手决定,接入件同步回报已完成显示交接的事件身份。已接手事件的临时空内容、音乐暂停与用户收起不终止接手。",
-    "events": ["events", "settings", "alive"],
-    "stateReply": ["confirmed"]
+    "version": 5,
+    "description": "事件内容与事件存续分别传递;星河岛发送接手决定,接入件同步回报已完成显示交接的事件身份。已接手事件的临时空内容、音乐暂停与用户收起不终止接手。接入件每次启动用新的随机会话,握手回显同一会话,星河岛只通过握手更换受信会话;事件包、接手决定与同步确认都带这场会话,只认当前会话;两边都在系统界面主线程上同步交换,事件包按到达顺序生效;接手决定带递增序号,同步确认须回显同一序号(防止处理决定时重入的旧答复生效),陌生或旧会话的事件包、回执与断连一律忽略。暂停、停止、重连先发当前会话的显式断连:星河岛在主线程同步撤下旧事件、确认与归属并失效该会话,接入件随后恢复原生显示。星河岛主动撤销时在接手决定里带释放标记:接入件先恢复原生显示,再使这次握手失效;普通的归属变化不带这个标记。",
+    "events": ["session", "events", "settings", "alive"],
+    "stateReply": ["session", "epoch", "confirmed"],
+    "perform": ["session", "identity", "action"],
+    "opened": ["session", "identity", "action"],
+    "disconnect": {
+      "op": "disconnect",
+      "fields": ["session"],
+      "description": "当前会话退出:接入件先发带 session 的断连,星河岛同步撤下旧事件、确认与归属并失效该会话,接入件随后恢复原生显示;陌生或旧会话的断连一律忽略。"
+    },
+    "release": {
+      "fields": ["release"],
+      "description": "星河岛主动撤销接入时,在当前会话的接手决定里带的显式释放标记;接入件先恢复原生显示,再使这次握手失效。普通的归属变化不带这个标记。"
+    },
+    "templatePerform": {
+      "fields": ["session", "identity", "templatePageId", "templateActionName", "templateAction"],
+      "description": "星河岛按当前活动的模板页、动作名与数据代入后交出动作(类型、地址、方法、参数、数据、标记、包名及按顺序试的备选做法);接入件不读取模板,只核对会话、活动、页面与锁屏后执行,打开页面与交给提供方的限制不变。"
+    }
   },
   "vendors": [
     { "id": "oppo", "name": "OPPO 系(ColorOS 流体云)", "mapping": "island-system-events.oppo.v1.json" }

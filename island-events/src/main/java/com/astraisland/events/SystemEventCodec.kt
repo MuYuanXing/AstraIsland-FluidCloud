@@ -43,6 +43,11 @@ object SystemEventCodec {
         putString("packageName", e.packageName)
         putString("sourcePackage", e.sourcePackage)
         putString("serviceName", e.serviceName)
+        putString("serviceId", e.serviceId)
+        putString("templateVersion", e.templateVersion)
+        putString("templatePageId", e.templatePageId)
+        putBundle("templateData", Bundle().apply { e.templateData.forEach { (key, value) -> putString(key, value) } })
+        putString("templateDir", e.templateDir)
         putBoolean("lockScreen", e.lockScreen)
         putString("alert", e.alert.id)
         putString("instant", e.instant.id)
@@ -82,6 +87,11 @@ object SystemEventCodec {
         packageName = b.getString("packageName").orEmpty(),
         sourcePackage = b.getString("sourcePackage").orEmpty(),
         serviceName = b.getString("serviceName").orEmpty(),
+        serviceId = b.getString("serviceId").orEmpty(),
+        templateVersion = b.getString("templateVersion").orEmpty(),
+        templatePageId = b.getString("templatePageId").orEmpty(),
+        templateData = b.getBundle("templateData")?.let { data -> data.keySet().associateWith { data.getString(it).orEmpty() } }.orEmpty(),
+        templateDir = b.getString("templateDir").orEmpty(),
         lockScreen = b.getBoolean("lockScreen"),
         alert = Alert.of(b.getString("alert")) ?: Alert.NONE,
         instant = Instant.of(b.getString("instant")) ?: Instant.NO,

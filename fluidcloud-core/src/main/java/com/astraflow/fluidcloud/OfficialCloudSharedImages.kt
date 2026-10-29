@@ -33,6 +33,10 @@ object OfficialCloudSharedImages {
     @Volatile private var onLoaded: () -> Unit = {}
     @Volatile private var worker: Executor = Executors.newSingleThreadExecutor { r -> Thread(r, "AstraFlow-SharedImages").apply { isDaemon = true } }
 
+    /** 已完成的加载代次；图片读入后使引用此图片的事件缓存失效。 */
+    @Volatile var revision = 0L
+        private set
+
     fun bind(context: Context, onLoaded: () -> Unit) {
         this.context = context
         this.onLoaded = onLoaded
@@ -60,7 +64,10 @@ object OfficialCloudSharedImages {
                 .onFailure { Log.w(TAG, "shared card picture unreadable: ${Uri.parse(uri).authority}", it) }.getOrNull()
             if (loaded != null) synchronized(cache) { cache.put(uri, loaded) } else failed.put(uri, true)
             synchronized(loading) { loading.remove(uri) }
-            if (loaded != null) main.post { runCatching { onLoaded() } }
+            if (loaded != null) main.post {
+                synchronized(this) { revision++ }
+                runCatching { onLoaded() }
+            }
         }
         return null
     }
@@ -107,5 +114,6 @@ object OfficialCloudSharedImages {
         synchronized(loading) { loading.clear() }
         context = null
         onLoaded = {}
+        synchronized(this) { revision++ }
     }
 }
