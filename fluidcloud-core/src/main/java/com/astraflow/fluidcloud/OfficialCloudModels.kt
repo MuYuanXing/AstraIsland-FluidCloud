@@ -168,7 +168,16 @@ data class CloudSnapshot(
      * 事件身份,与系统流体云给这件事的编号一致(服务号、服务实例、用户、服务的时间戳,时间戳标识服务的一次生命周期)。
      * 不含来源应用:内容送到前后来源应用会从托管服务换成真正的应用,换了也还是同一件事;通知栏与状态栏的 size 不参与身份。
      */
-    val key: String get() = "$userId|$serviceId|$instanceId|$startedAtWallMs"
+    val key: String get() = identity(userId, serviceId, instanceId, startedAtWallMs)
+
+    companion object {
+        /**
+         * 岛侧事件身份的唯一写法(用户|服务号|服务实例|服务时间戳):星河岛报来的接手结果、动作、让位回执都按它认。
+         * 和显示记录自己的编号(服务号|服务实例|用户|服务时间戳)不是一套,两边不要互相代用。
+         */
+        fun identity(userId: Int, serviceId: String, instanceId: String, startedAtWallMs: Long): String =
+            "$userId|$serviceId|$instanceId|$startedAtWallMs"
+    }
 }
 
 /**

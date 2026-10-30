@@ -40,12 +40,12 @@ object OfficialCloudNotificationGate {
         onGateStateChanged()
     }
 
-    /** 此刻截不截:接入开关开着,且星河岛在管事(星河岛不在、没收下时命令照常交给系统) */
-    @Volatile var wanted: () -> Boolean = { accessOn && OfficialCloudSource.islandActive }
+    /** 此刻截不截:接入开关开着,且星河岛在管事、此刻能露面(星河岛不在、熄屏时命令照常交给系统) */
+    @Volatile var wanted: () -> Boolean = { accessOn && OfficialCloudSource.interceptsSource() }
 
     /**
      * 回放:把缓存的那一份经装在原方法上的钩子再调一次原方法——不绕过挂钩直接反射,系统的处理照常发生;
-     * 回放时裁决为「不截」,不会把同一份命令截两遍。
+     * 回放期间裁决一律放行(见 [replaying]),不会把同一份命令截两遍。
      */
     @Volatile var replay: (Method, Any?, Array<Any?>) -> Unit = { method, target, args ->
         val hooker = hookerOf(method)
@@ -55,6 +55,9 @@ object OfficialCloudNotificationGate {
     /** 防崩停用:连续出错后不再截,直到下一次系统界面启动 */
     @Volatile private var disabled = false
     private var failures = 0
+
+    /** 正在回放的这一份不能再被截:交还时岛可能还在管事,回放必须真的走到原方法 */
+    private val replaying = ThreadLocal.withInitial { false }
 
     /** 一个接收对象错过系统的最近一份:原方法、弱引用的接收对象、拷好的参数(系统可能复用送来的对象,不能只存引用)。
      *  汇合点是静态的 access$ 方法时接收对象在第一个参数上,拷参数时那一格留空,回放时再放回去。 */
@@ -131,6 +134,8 @@ object OfficialCloudNotificationGate {
 
     /** before 环节的裁决:返回非空表示截住本次调用(不调原方法)。汇合点是静态的 access$ 方法时,接收对象在第一个参数上。 */
     fun decide(chain: XposedInterface.Chain): Any? {
+        // 回放走的是同一个钩子:这时必须放行到原方法,不能再截一遍
+        if (replaying.get() == true) return null
         val method = chain.executable as? Method ?: return null
         val receiver = chain.thisObject ?: chain.getArg(0) ?: return null
         if (!engaged()) {
@@ -166,12 +171,15 @@ object OfficialCloudNotificationGate {
         val pending = synchronized(missed) { missed.remove(target) } ?: return
         val owner = pending.target.get() ?: return
         try {
+            replaying.set(true)
             val args = pending.args.map { restore(it, pending.loader) }.toTypedArray()
             if (pending.receiverAt in args.indices) args[pending.receiverAt] = owner
             replay(pending.method, owner, args)
             success()
         } catch (failure: Throwable) {
             noteFailure(failure)
+        } finally {
+            replaying.set(false)
         }
     }
 
@@ -256,7 +264,7 @@ object OfficialCloudNotificationGate {
         synchronized(uncopyable) { uncopyable.clear() }
         installed = false
         accessOn = true
-        wanted = { accessOn && OfficialCloudSource.islandActive }
+        wanted = { accessOn && OfficialCloudSource.interceptsSource() }
         replay = { method, target, args ->
             val hooker = hookerOf(method)
             if (hooker != null) hooker.intercept(CommandChain(method, target, args)) else method.invoke(target, *args)

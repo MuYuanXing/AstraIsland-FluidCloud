@@ -51,7 +51,9 @@ object OfficialCloudTranslator {
             serviceId = if (template) snapshot.serviceId else "",
             templateVersion = if (template) snapshot.templateVersion.toString() else "",
             templatePageId = if (template) snapshot.pageId else "",
-            templateData = if (template) snapshot.templateData else emptyMap(),
+            // 来源送来的原始数据整份照交(清单 templateData:不转换为旧卡片字段):没有原版模板的服务也交,
+            // 星河岛按自己的卡片总表取用;模板身份、页和文件夹才只在有模板时给
+            templateData = snapshot.templateData,
             templateDir = snapshot.templateDir,
             templateImages = templateImages,
             templateImageOwner = if (template) record.templateImageOwner else null,

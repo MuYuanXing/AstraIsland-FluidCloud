@@ -101,7 +101,9 @@ object AdapterBridge {
             return
         }
         paused = true
-        start(packageName, versionCode, onAccepted = {}, onState = {}, onStatus = onStatus)
+        // 交还回调照旧留着:暂停时星流这一边要当场当作没连上(闸门把手上的原始数据交还系统),
+        // 不能因为暂停把上一场的交还入口换掉。还没接过入口时它本来就是空回调。
+        start(packageName, versionCode, onAccepted = {}, onState = onState, onStatus = onStatus)
     }
 
     /** 向星河岛打招呼;星河岛不在时等它到了再打(它到了会发 [EventBridge.OP_READY]) */

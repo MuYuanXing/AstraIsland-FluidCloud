@@ -127,6 +127,8 @@ object OfficialCloudYield {
             displays.isNotEmpty() && displays.values.all { it.owner.get() != null }
         }
         val blocking = available && status != Status.UNAVAILABLE && OfficialCloudSource.exitBlocking()
+        // 源头已经交还系统、岛还没接回来的事:放行,不藏也不在出口就地重读(那条记录就是系统自己建的)
+        val released = OfficialCloudSource.releasedNativeKeys()
         for (model in input) {
             if (model == null || !available) { output += model; continue }
             val key = OfficialCloudReflection.nativeKey(model)
@@ -137,7 +139,7 @@ object OfficialCloudYield {
             // 例外放行:接手名单里但显示执行未确认的(星河岛明确不接或执行不支持,显式让位)、
             // 分类关闭的(用户指定由系统显示)。
             val failedNow = synchronized(failed) { key in failed }
-            val handedBack = failedNow || (key in lastDesired && key !in confirmed)
+            val handedBack = failedNow || (key in lastDesired && key !in confirmed) || key in released
             val categoryClosed = !OfficialCloudSource.kindAllowed(key)
             if (blocking && entrance == "ENTRY_STATUS_BAR" && !handedBack && !categoryClosed) {
                 if (key !in effective) OfficialCloudSource.receiveFromDisplay(model)

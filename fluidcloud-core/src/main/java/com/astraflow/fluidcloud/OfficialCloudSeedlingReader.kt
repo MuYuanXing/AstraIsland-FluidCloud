@@ -32,10 +32,13 @@ object OfficialCloudSeedlingReader {
     private const val MAX_SERVICES = 128
 
     /**
-     * 一张系统服务卡片在一个显示位置上此刻的样子:事件编号(和系统流体云给这件事的编号一样:服务号|服务实例|用户|服务时间戳)、
-     * 用户、显示位置,以及读到的 OPPO 接口对象——服务信息、最近一份卡片内容(还没送到时为空)、系统卡片和卡片引擎(点按钮用)。
+     * 一张系统服务卡片在一个显示位置上此刻的样子:显示记录编号 [key](和系统流体云给显示记录的编号一样:服务号|服务实例|用户|服务时间戳)、
+     * 岛侧事件身份 [identity](和星河岛 SystemEvent.identity 一样:用户|服务号|服务实例|服务时间戳)、用户、显示位置,
+     * 以及读到的 OPPO 接口对象——服务信息、最近一份卡片内容(还没送到时为空)、系统卡片和卡片引擎(点按钮用)。
+     * 两个编号不是一套:显示隐藏、让位认 [key](系统显示记录自己的编号);接手、交还、动作认 [identity](星河岛报来的编号),不要互相代用。
      */
-    class Entry(val key: String, val user: Int, val entrance: String, val service: Any, val ui: Any?, val card: Any?, val seedling: Any?)
+    class Entry(val key: String, val user: Int, val entrance: String, val service: Any, val ui: Any?, val card: Any?, val seedling: Any?,
+                val identity: String)
 
     /** 一个显示位置的记录管理:编号、显示位置、收到过名单没有、此刻的卡片(照名单的先后) */
     private class Owner(val id: String, val entrance: String, manager: Any) {
@@ -77,13 +80,15 @@ object OfficialCloudSeedlingReader {
             // 记录管理手上已有的记录(挂钩装好之前就在的卡片从这里认领),只在有卡片还没有内容时才找一次
             val existing by lazy { modelsOf(manager) }
             for (service in kept) {
-                val key = keyOf(service, user) ?: continue
-                val old = owner.entries[key]
+                val keys = keysOf(service, user) ?: continue
+                val old = owner.entries[keys.key]
                 // 系统已处理本次名单:重建时只认领它当前的新记录,不沿用旧内容。
                 val rebuild = OfficialCloudReflection.call(service, "getForceRebuild") == true
-                next[key] = when {
-                    old != null && !rebuild && old.ui != null -> Entry(key, user, entrance, service, old.ui, old.card, old.seedling)
-                    else -> adopt(existing, key, user, entrance, service)?.also(adoptions::add) ?: Entry(key, user, entrance, service, null, null, null)
+                next[keys.key] = when {
+                    old != null && !rebuild && old.ui != null ->
+                        Entry(keys.key, user, entrance, service, old.ui, old.card, old.seedling, keys.identity)
+                    else -> adopt(existing, keys, user, entrance, service)?.also(adoptions::add)
+                        ?: Entry(keys.key, user, entrance, service, null, null, null, keys.identity)
                 }
             }
             val added = next.keys - owner.entries.keys
@@ -103,15 +108,15 @@ object OfficialCloudSeedlingReader {
      * 挂钩装好之前就在的卡片(系统界面刚启动、插件重新加载时,挂钩在后台找挂点这一会儿里来的):记录管理手上已有这件事的记录时,
      * 从记录身上取最近一份内容和系统卡片(都是 OPPO 接口里的对象),不用等它下一次更新。
      */
-    private fun adopt(models: List<Any>, key: String, user: Int, entrance: String, service: Any): Entry? {
+    private fun adopt(models: List<Any>, keys: Keys, user: Int, entrance: String, service: Any): Entry? {
         val model = models.firstOrNull { model ->
-            OfficialCloudReflection.fieldOfType(model, OfficialCloudReflection.SERVICE_INFO)?.let { keyOf(it, user) } == key
+            OfficialCloudReflection.fieldOfType(model, OfficialCloudReflection.SERVICE_INFO)?.let { keyOf(it, user) } == keys.key
         } ?: return null
         val card = OfficialCloudReflection.fieldOfType(model, CARD)
         val ui = OfficialCloudReflection.call(card?.let { OfficialCloudReflection.fieldOfType(it, PANTANAL_DATA) }, "getSeedlingUIData")
             ?: OfficialCloudReflection.fieldOfType(model, SEEDLING_UI_DATA) ?: return null
         val seedling = OfficialCloudReflection.fieldOfType(model, OfficialCloudReflection.SEEDLING) ?: OfficialCloudReflection.call(card, "getInnerCard")
-        return Entry(key, user, entrance, service, ui, card, seedling)
+        return Entry(keys.key, user, entrance, service, ui, card, seedling, keys.identity)
     }
 
     /** 记录管理手上的记录(带服务信息的对象):在它身上的集合里,或者再往下一层的集合里 */
@@ -159,7 +164,8 @@ object OfficialCloudSeedlingReader {
             }
             val seedling = OfficialCloudReflection.fieldOfType(located.model, OfficialCloudReflection.SEEDLING)
                 ?: OfficialCloudReflection.call(located.card, "getInnerCard") ?: known?.seedling
-            val entry = Entry(located.key, located.user, located.entrance, located.service, ui, located.card ?: known?.card, seedling)
+            val entry = Entry(located.key, located.user, located.entrance, located.service, ui, located.card ?: known?.card, seedling,
+                located.identity)
             owner.entries[located.key] = entry
             // 到货诊断(正式包也写进岛的日志):每个显示位置按「服务号、卡片引擎在不在、内容树有没有」签名写一行,签名变了才写
             val line = "${owner.id}(${owner.entrance}) ${OfficialCloudReflection.describe(entry)}"
@@ -185,8 +191,12 @@ object OfficialCloudSeedlingReader {
         byId.values.mapNotNullTo(mutableSetOf()) { it.manager.get()?.javaClass?.classLoader }
     }
 
-    /** 卡片内容送到的那一处属于哪件事:接收对象身上的记录管理(带显示位置)和记录(带服务信息、系统卡片)。让位也按这个认。 */
-    class Located(val manager: Any, val entrance: String, val model: Any, val service: Any, val card: Any?, val key: String, val user: Int)
+    /**
+     * 卡片内容送到的那一处属于哪件事:接收对象身上的记录管理(带显示位置)和记录(带服务信息、系统卡片)。
+     * [key] 是显示记录编号,让位按它认;[identity] 是岛侧事件身份,源头拦截、接手与交还按它认。
+     */
+    class Located(val manager: Any, val entrance: String, val model: Any, val service: Any, val card: Any?, val key: String,
+                  val identity: String, val user: Int)
 
     fun locate(interceptor: Any): Located? {
         val manager = managerOf(interceptor) ?: return null
@@ -194,8 +204,8 @@ object OfficialCloudSeedlingReader {
         val model = modelOf(interceptor) ?: return null
         val service = OfficialCloudReflection.fieldOfType(model, OfficialCloudReflection.SERVICE_INFO) ?: return null
         val user = currentUser()
-        val key = keyOf(service, user) ?: return null
-        return Located(manager, entrance, model, service, OfficialCloudReflection.fieldOfType(model, CARD), key, user)
+        val keys = keysOf(service, user) ?: return null
+        return Located(manager, entrance, model, service, OfficialCloudReflection.fieldOfType(model, CARD), keys.key, keys.identity, user)
     }
 
     /**
@@ -205,12 +215,27 @@ object OfficialCloudSeedlingReader {
     fun readable(interceptor: Any, data: Any?): Boolean =
         locate(interceptor) != null && OfficialCloudReflection.call(data, "getSeedlingUIData") != null
 
-    /** 事件编号,和系统流体云给这件事的编号一样:服务号|服务实例|用户|服务时间戳 */
-    fun keyOf(service: Any, user: Int): String? {
+    /** 一件事的两个编号:显示记录用自己的,星河岛报来的接手结果用事件身份;两套不能互相代用 */
+    private class Keys(val key: String, val identity: String)
+
+    /**
+     * 显示记录编号(服务号|服务实例|用户|服务时间戳)和岛侧事件身份(用户|服务号|服务实例|服务时间戳)。
+     * 事件身份与 [CloudSnapshot.key] 同一写法(实例读不到时按记录里的另一个字段,和读快照时一样),保证和星河岛报来的编号对得上;
+     * 显示记录编号照系统显示记录自己的写法,保持原样,不跟着事件身份换写法。
+     */
+    private fun keysOf(service: Any, user: Int): Keys? {
         val serviceId = OfficialCloudReflection.text(OfficialCloudReflection.call(service, "getServiceId")).takeIf { it.isNotBlank() } ?: return null
         val time = (OfficialCloudReflection.call(service, "getTimeStamp") as? Number)?.toLong() ?: return null
-        return "$serviceId|${OfficialCloudReflection.text(OfficialCloudReflection.call(service, "getServiceInstanceId"))}|$user|$time"
+        val instance = OfficialCloudReflection.text(OfficialCloudReflection.call(service, "getServiceInstanceId"))
+        val identityInstance = instance.ifBlank { OfficialCloudReflection.text(OfficialCloudReflection.call(service, "getInstanceId")) }
+        return Keys("$serviceId|$instance|$user|$time", CloudSnapshot.identity(user, serviceId, identityInstance, time))
     }
+
+    /** 显示记录编号,和系统流体云给显示记录的编号一样:服务号|服务实例|用户|服务时间戳 */
+    fun keyOf(service: Any, user: Int): String? = keysOf(service, user)?.key
+
+    /** 岛侧事件身份,和星河岛 SystemEvent.identity 一样:用户|服务号|服务实例|服务时间戳 */
+    fun identityOf(service: Any, user: Int): String? = keysOf(service, user)?.identity
 
     /** 这个显示位置此刻的卡片整份交给 OfficialCloudSource;顺手撤掉记录管理已经不在的那几份 */
     private fun emit(owner: Owner) {

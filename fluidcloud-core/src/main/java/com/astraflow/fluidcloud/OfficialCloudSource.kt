@@ -364,6 +364,17 @@ object OfficialCloudSource {
             }
             translated.keys.retainAll(liveTranslations)
             actions?.retain(records.mapTo(HashSet()) { it.snapshot.key })
+            // 交过这一批之后岛才谈得上接不接:闸门按这份名单判断手上截住的要不要交还系统。
+            // 记的是岛侧事件身份(和星河岛报来的接手结果同一编号),同时留下它对应的系统显示记录编号,显示过滤只认后者。
+            if (AdapterBridge.connected()) {
+                val pushedNow = LinkedHashMap<String, MutableSet<String>>()
+                records.forEach { record ->
+                    val natives = pushedNow.getOrPut(record.snapshot.key) { linkedSetOf() }
+                    natives += record.snapshot.nativeKey
+                }
+                pushed = pushedNow.mapValues { it.value.toSet() }
+            }
+            if (!settings.access || !islandActive) released = emptyMap()
             AdapterBridge.push(events, settings, store.aliveIdentities())
             // 预隐藏集合跟着数据走:通知胶囊新到、结束时重算显示交接,不依赖接手答复
             val prehiddenNow = prehiddenNativeKeys()
@@ -384,6 +395,50 @@ object OfficialCloudSource {
         if (remapClaims()) OfficialCloudYield.resetRetries()
         applyingIslandState.set(true)
         try { OfficialCloudYield.refresh() } finally { applyingIslandState.set(false) }
+        // 接手结果变了:按新结果把源头截住的数据及时交还(关闭岛、断开、暂停、熄屏、模板拒绝都在这里)
+        handBackUnclaimed()
+    }
+
+    /**
+     * 岛报来的接手结果变了以后,把源头截住的原始数据按新结果交还:
+     * - 不再管事、不能露面或没连着(关闭接入、关闭岛、插件暂停、断连、熄屏):闸门把手上的每一份都交还系统;
+     * - 还在管事但不接这几件(模板没读好、页里有引擎没实现的节点、这类在插件里关掉、还没读到内容、显示交接没执行成):
+     *   只交还这几件,岛已接手的其它事照旧留着,不把已接手的重新塞回系统;
+     * - 交还过的事按岛侧事件身份记下来,显示过滤按这些事件对应的系统显示记录编号放行;岛后来接了同一件时两套一起去掉,
+     *   重新按接手结果藏起,不双显。
+     */
+    private fun handBackUnclaimed() {
+        if (!interceptsSource()) {
+            // 不再截:闸门把手上的全部交还;已交还的记录不再单独记,显示过滤按「不在管事」自己放行
+            released = emptyMap()
+            OfficialCloudGate.onGateStateChanged()
+            OfficialCloudNotificationGate.onGateStateChanged()
+            return
+        }
+        val claimed = handledIdentities + spentIdentities + alwaysIdentities
+        // 显示交接还没定下来时不算岛不接:等它执行完再看,免得多弹一下系统胶囊
+        val settled = OfficialCloudYield.status == OfficialCloudYield.Status.AVAILABLE ||
+            OfficialCloudYield.status == OfficialCloudYield.Status.PARTIAL ||
+            OfficialCloudYield.status == OfficialCloudYield.Status.UNAVAILABLE
+        val taken = if (settled) claimed.intersect(confirmedIdentities()) else claimed
+        val pushedNow = pushed
+        val release = linkedSetOf<String>()
+        for (identity in OfficialCloudGate.heldIdentities()) {
+            if (identity in pushedNow && identity !in taken) release += identity
+        }
+        if (release.isNotEmpty()) OfficialCloudGate.release(release)
+        // 交还过的事记下事件身份和它对应的显示记录编号;岛接了同一件时两套一起撤掉
+        val next = LinkedHashMap<String, Set<String>>()
+        released.forEach { (identity, natives) -> if (identity !in taken) next[identity] = natives }
+        for (identity in release) {
+            val natives = LinkedHashSet<String>(pushedNow[identity].orEmpty())
+            natives.addAll(store.nativeKeys(identity))
+            next[identity] = natives
+        }
+        released = if (next.size > RELEASED_MAX) {
+            val kept = next.entries.toList().takeLast(RELEASED_MAX)
+            LinkedHashMap<String, Set<String>>(kept.size).apply { kept.forEach { put(it.key, it.value) } }
+        } else next
     }
 
     /** 显示管理对象在接手答复之外恢复或失效时，主动把现有事件再交一次，让岛重新核对实际确认。 */
@@ -396,6 +451,28 @@ object OfficialCloudSource {
 
     /** 最近一次 synchronize 算出的预隐藏集合;变了才让显示交接重算 */
     private var prehiddenClaims: Set<String> = emptySet()
+
+    /**
+     * 最近一次交给星河岛的那一批事件:岛侧事件身份 → 它的系统显示记录编号(同一件事可能在两个显示位置各有一条)。
+     * 交过之后才谈得上岛接不接;没交过的不能当成它不接。
+     */
+    @Volatile private var pushed: Map<String, Set<String>> = emptyMap()
+
+    /**
+     * 源头已经交还系统、岛还没接回来的事件:岛侧事件身份 → 交还时对上的系统显示记录编号。
+     * 显示过滤按后者放行——不藏、也不在出口就地重读,系统自己建的那条记录照常显示;
+     * 岛后来接了同一件事时按前者撤掉,重新按接手结果藏起。两套编号分开记,不互相代用。
+     */
+    @Volatile private var released: Map<String, Set<String>> = emptyMap()
+
+    /**
+     * 源头此刻截不截:星河岛在管事、连着、且此刻能露面(熄屏、锁屏关了显示时交还系统,与显示交接同一个露面条件)。
+     * 接入开关由闸门自己读。拦截与否要和显示交接同一份判断,否则会留下「系统没建记录、岛也不显示」的空档。
+     */
+    fun interceptsSource(): Boolean = islandActive && AdapterBridge.connected() && yieldAllowed
+
+    /** 源头已经交还系统的那些事件的系统显示记录编号:显示过滤放行,交还过的记录不再被藏起 */
+    fun releasedNativeKeys(): Set<String> = released.values.flatten().toCollection(linkedSetOf())
 
     /**
      * 星河岛报来的事件身份换成系统记录编号(系统记录会换,同一件事可能有几条);变了返回真。
@@ -411,6 +488,9 @@ object OfficialCloudSource {
         nativeClaims = hide; spentClaims = spent; alwaysClaims = always
         return changed
     }
+
+    /** 交还过、还没被岛接回来的事件身份最多记这么多;正常只有少数几件被拒的事 */
+    private const val RELEASED_MAX = 256
 
     /** 卡片数据里放图片的字段名(诊断用) */
     private val IMAGE_FIELD = Regex("(?i)(icon|image|img|logo|pic)")
@@ -428,6 +508,7 @@ object OfficialCloudSource {
         islandActive = false; yieldAllowed = false
         handledIdentities = emptySet(); spentIdentities = emptySet(); alwaysIdentities = emptySet()
         nativeClaims = emptySet(); spentClaims = emptySet(); alwaysClaims = emptySet(); prehiddenClaims = emptySet()
+        pushed = emptyMap(); released = emptyMap()
         notedUnreadable.clear()
         OfficialCloudImages.clear()
         OfficialCloudTemplates.clear()
