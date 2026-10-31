@@ -156,28 +156,12 @@ data class CloudSnapshot(
     val intentAction: String = "",
     /** 这一版数据要求胶囊抖一下(提供方送来的 shouldShake,只对里程碑、即时提醒事件有效,见 OPPO 文档 13330) */
     val shake: Boolean = false,
-    /**
-     * 这张卡片的原版模板所在文件夹(系统界面存储里与 [templateVersion] 同名的版本目录);没有对得上的版本时为空。
-     * 星河岛按它直接读模板、决定是否按模板显示,接入件不传模板文件。
-     */
-    val templateDir: String = "",
-    /** 提供方送来的原始数据(未并入模板默认内容、未翻译代号),交给星河岛按模板代入 */
-    val templateData: Map<String, String> = emptyMap(),
 ) {
     /**
      * 事件身份,与系统流体云给这件事的编号一致(服务号、服务实例、用户、服务的时间戳,时间戳标识服务的一次生命周期)。
      * 不含来源应用:内容送到前后来源应用会从托管服务换成真正的应用,换了也还是同一件事;通知栏与状态栏的 size 不参与身份。
      */
-    val key: String get() = identity(userId, serviceId, instanceId, startedAtWallMs)
-
-    companion object {
-        /**
-         * 岛侧事件身份的唯一写法(用户|服务号|服务实例|服务时间戳):星河岛报来的接手结果、动作、让位回执都按它认。
-         * 和显示记录自己的编号(服务号|服务实例|用户|服务时间戳)不是一套,两边不要互相代用。
-         */
-        fun identity(userId: Int, serviceId: String, instanceId: String, startedAtWallMs: Long): String =
-            "$userId|$serviceId|$instanceId|$startedAtWallMs"
-    }
+    val key: String get() = "$userId|$serviceId|$instanceId|$startedAtWallMs"
 }
 
 /**
@@ -281,23 +265,4 @@ data class CloudContent(
 )
 
 enum class CloudChange { REPLACE, POST, REMOVE }
-
-/**
- * 原版模板用的图(contracts/island-system-events.v1.json 的 templateImages):接入件读好的字节,或放在来源应用
- * 共享位置的照片(由接入件读成字节后交,读不到就是缺图)。
- */
-sealed interface TemplateImage {
-    class Bytes(val bytes: ByteArray) : TemplateImage
-    class Shared(val image: CloudImage) : TemplateImage
-}
-
-/**
- * 一条系统记录:快照(数据、模板位置)、按旧画法翻好的通用内容,以及模板用的图(名字 → 图来源)。
- * 图在翻译成标准事件时才换成字节:共享位置的照片可能晚一点才读好,届时会重新翻译。
- */
-data class CloudRecord(
-    val snapshot: CloudSnapshot,
-    val content: CloudContent,
-    val templateImages: Map<String, TemplateImage> = emptyMap(),
-    val templateImageOwner: String? = null,
-)
+data class CloudRecord(val snapshot: CloudSnapshot, val content: CloudContent)

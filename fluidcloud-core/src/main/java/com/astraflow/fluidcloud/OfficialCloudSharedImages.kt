@@ -32,8 +32,7 @@ object OfficialCloudSharedImages {
     @Volatile private var context: Context? = null
     @Volatile private var onLoaded: () -> Unit = {}
     @Volatile private var worker: Executor = Executors.newSingleThreadExecutor { r -> Thread(r, "AstraFlow-SharedImages").apply { isDaemon = true } }
-
-    /** 已完成的加载代次；图片读入后使引用此图片的事件缓存失效。 */
+    /** 已完成的加载代次；同一原始记录的图片内容改变后，事件翻译缓存必须失效。 */
     @Volatile var revision = 0L
         private set
 

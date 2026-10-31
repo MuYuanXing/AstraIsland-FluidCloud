@@ -37,9 +37,6 @@ object OfficialCloudTranslator {
         val kind = OfficialCloudServices.kind(snapshot)
         val pictures = Pictures()
         val data = snapshot.data
-        val template = snapshot.templateDir.isNotEmpty()
-        // 模板用的图:字节原样交,共享位置的照片此刻读好了才交(读不好就是缺图,与外部接入一致)
-        val templateImages = if (template) OfficialCloudTemplateImages.event(record.templateImages) else emptyMap()
         return SystemEvent(
             identity = snapshot.key,
             userId = snapshot.userId,
@@ -48,15 +45,6 @@ object OfficialCloudTranslator {
             packageName = snapshot.packageName,
             sourcePackage = OfficialCloudServices.sourcePackage(snapshot),
             serviceName = OfficialCloudServices.serviceName(snapshot),
-            serviceId = if (template) snapshot.serviceId else "",
-            templateVersion = if (template) snapshot.templateVersion.toString() else "",
-            templatePageId = if (template) snapshot.pageId else "",
-            // 来源送来的原始数据整份照交(清单 templateData:不转换为旧卡片字段):没有原版模板的服务也交,
-            // 星河岛按自己的卡片总表取用;模板身份、页和文件夹才只在有模板时给
-            templateData = snapshot.templateData,
-            templateDir = snapshot.templateDir,
-            templateImages = templateImages,
-            templateImageOwner = if (template) record.templateImageOwner else null,
             lockScreen = snapshot.lockScreenAllowed,
             alert = OfficialCloudServices.alert(snapshot),
             instant = OfficialCloudServices.instant(snapshot),
@@ -90,7 +78,6 @@ object OfficialCloudTranslator {
             switchState = OfficialCloudServices.switchState(snapshot),
             mediaPackage = if (kind == EventKind.MUSIC) OfficialCloudServices.mediaPackage(snapshot) else null,
             details = OfficialCloudServices.detailsRecipe(snapshot),
-            // 有原版模板时也照常给出通用卡片内容:用不用模板显示由星河岛决定
             card = card(content, kind, pictures),
         )
     }
