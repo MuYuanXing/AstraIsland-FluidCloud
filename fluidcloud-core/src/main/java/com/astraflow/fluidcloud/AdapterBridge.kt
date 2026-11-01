@@ -25,6 +25,8 @@ object AdapterBridge {
     private var onState: (Bundle) -> Unit = {}
     /** 见面的结果:connected、testing(按机主允许的本机测试收下)、absent(系统界面里还没有星河岛),或 refused:原因(交给插件的页面) */
     private var onStatus: (String) -> Unit = {}
+    /** 最近一次交给星河岛的接入件设置:停止时用它送「全部事件为空」,岛那边的四类开关不变 */
+    private var lastSettings: Bundle? = null
 
     private val endpoint = Function<Bundle, Bundle?> { request -> runCatching { handle(request) }.onFailure { Log.e(TAG, "request failed", it) }.getOrNull() }
 
@@ -39,8 +41,27 @@ object AdapterBridge {
     }
 
     fun stop() {
-        EventBridge.withdraw(EventBridge.ADAPTER, endpoint)
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { stop() }; return }
+        val wasAccepted = accepted
+        // 交还用的回调先取出来:下面会把字段清掉,清完就不能再读。
+        val callback = onState
+        // 先使本次握手失效:停止途中星河岛发回的接手决定不能再改这边的显示。
         accepted = false
+        if (wasAccepted) {
+            // 停止时先交还(现行规则「系统事件接入」):把「全部事件为空」交给星河岛,岛同步撤下这些事件;
+            // 接入件随后恢复原生显示,最后才清掉回调。
+            lastSettings?.let { settings ->
+                EventBridge.send(EventBridge.ISLAND, EventBridge.request(EventBridge.OP_EVENTS) {
+                    putBundle(EventBridge.KEY_EVENTS, SystemEventCodec.encode(emptyList()))
+                    putBundle(EventBridge.KEY_SETTINGS, Bundle(settings))
+                    putStringArray(EventBridge.KEY_ALIVE, emptyArray())
+                })
+            }
+            // 空接手决定是无需事件身份的释放:系统胶囊与卡片按系统自己的名单恢复显示。
+            runCatching { callback(Bundle()) }.onFailure { Log.e(TAG, "release on stop failed", it) }
+        }
+        EventBridge.withdraw(EventBridge.ADAPTER, endpoint)
+        lastSettings = null
         paused = false
         onAccepted = {}
         onState = {}
@@ -91,7 +112,14 @@ object AdapterBridge {
         EventBridge.OP_STATE -> {
             // 显示交接只在主线程同步执行;异步投递不能作为已经执行的答复。
             if (accepted && Looper.myLooper() == Looper.getMainLooper()) {
+                // 星河岛主动撤销接入时报一次「什么都不接手、不在管事」,不带任何事件身份(普通的归属变化一定带这三组):
+                // 接入件先恢复原生显示,再使本次握手失效;普通的归属变化不使握手失效(现行规则「系统事件接入」)。
+                val revoked = !request.getBoolean(EventBridge.KEY_ACTIVE) &&
+                    !request.containsKey(EventBridge.KEY_HANDLED) &&
+                    !request.containsKey(EventBridge.KEY_SPENT) &&
+                    !request.containsKey(EventBridge.KEY_ALWAYS)
                 onState(request)
+                if (revoked) accepted = false
                 Bundle().apply { putStringArray(EventBridge.KEY_CONFIRMED, OfficialCloudSource.confirmedIdentities().toTypedArray()) }
             } else null
         }
@@ -115,9 +143,12 @@ object AdapterBridge {
     /** 把全部事件和接入件的设置交给星河岛 */
     fun push(events: List<SystemEvent>, settings: FluidCloudSettings, alive: Set<String>) {
         if (!accepted) return
+        val settingsBundle = settings.toBundle()
+        // 停止时交还的是「全部事件为空」,接入件的设置照旧:岛上的四类开关不能因为一次停止被改掉。
+        lastSettings = Bundle(settingsBundle)
         EventBridge.send(EventBridge.ISLAND, EventBridge.request(EventBridge.OP_EVENTS) {
             putBundle(EventBridge.KEY_EVENTS, SystemEventCodec.encode(events))
-            putBundle(EventBridge.KEY_SETTINGS, settings.toBundle())
+            putBundle(EventBridge.KEY_SETTINGS, settingsBundle)
             putStringArray(EventBridge.KEY_ALIVE, alive.toTypedArray())
         })
     }
