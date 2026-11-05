@@ -48,14 +48,24 @@ object OfficialCloudYield {
     /** 最近一次完整执行成功时仍然有效的过滤集合；失败回滚只保留其中仍由岛接手的事件。 */
     private var lastApplied: Set<String>? = null
     private var refreshPosted = false
+    /** 原生重算途中报来的接收对象:这次交接仍由已经装上的一方执行完,结束后再换(见 applyPendingOwners)。 */
+    private val pendingOwners = java.util.IdentityHashMap<Display, Any>()
+    /** 一个短时间窗口内为了换接收对象重算的次数;窗口外重新开始计数。 */
+    private var ownerSwitches = 0
+    private var ownerSwitchWindowStart = 0L
+    /** 系统重绘引发的重算请求已经排上了(只重算显示交接本身,不再走数据同步整条链) */
+    private var handoverPosted = false
     private var testDisplay: ((Set<String>) -> Set<String>)? = null
     /** 安装失败或停用是显式状态，不能被测试执行器或空目标重算改写为可用。 */
     private var unavailable = false
     private var retryAttempt = 0
     private var retryPosted = false
+    /** 至少完成过一轮交接后,相同答复才可按稳定结果去重。 */
+    private var handoverFinished = false
     private val retry = Runnable {
         retryPosted = false
-        OfficialCloudSource.refresh()
+        // 重试只重算显示交接本身:再走一遍 synchronize→push→接手答复 只会把整条链又跑一遍。
+        refresh()
     }
 
     /** 两个显示入口必须全部找到；合并在同一方法中的入口只安装一次。 */
@@ -108,10 +118,16 @@ object OfficialCloudYield {
                 value?.let { OfficialCloudReflection.fieldOfType(it, type.name) }?.takeIf(type::isInstance)
             } ?: continue
             if (target.owner.get() !== owner) {
+                if (refreshing.get() == true) {
+                    // 原生重算途中报来的接收对象不能当场换:换掉会让这次已经执行到一半的交接被判成
+                    // 「交接对象变了」而永远确认不上(applied 一直为空 = 每帧重算)。等这次重算做完再换。
+                    synchronized(pendingOwners) { pendingOwners[target] = owner }
+                    continue
+                }
                 target.owner = WeakReference(owner)
                 // 新对象可能已按未过滤列表建立视图；旧对象的执行结果对新对象无效。
                 invalidate(); resetRetries()
-                if (refreshing.get() != true) requestRefresh()
+                requestRefresh()
             }
         }
     }
@@ -127,12 +143,15 @@ object OfficialCloudYield {
             displays.isNotEmpty() && displays.values.all { it.owner.get() != null }
         }
         val blocking = available && status != Status.UNAVAILABLE && OfficialCloudSource.exitBlocking()
+        val present = HashSet<String>(input.size)
+        var hasStatusBar = false
         for (model in input) {
             if (model == null || !available) { output += model; continue }
             val key = OfficialCloudReflection.nativeKey(model)
             // 身份读不到不是显示执行失败：保留系统显示，也不能因此撤销其它事件的已执行交接。
             if (key == null) { output += model; continue }
             val entrance = displayEntrance(model, key)
+            if (entrance == "ENTRY_STATUS_BAR") { hasStatusBar = true; present += key }
             // 出口默认拦截:状态栏份不论来源一律隐藏;不经数据门进来(不在执行名单)的就地读取。
             // 例外放行:接手名单里但显示执行未确认的(星河岛明确不接或执行不支持,显式让位)、
             // 分类关闭的(用户指定由系统显示)。
@@ -140,6 +159,7 @@ object OfficialCloudYield {
             val handedBack = failedNow || (key in lastDesired && key !in confirmed)
             val categoryClosed = !OfficialCloudSource.kindAllowed(key)
             if (blocking && entrance == "ENTRY_STATUS_BAR" && !handedBack && !categoryClosed) {
+                // 未接手的记录就地读取;同一份内容由 receiveFromDisplay 去重,真实更新仍进入。
                 if (key !in effective) OfficialCloudSource.receiveFromDisplay(model)
                 continue
             }
@@ -154,10 +174,51 @@ object OfficialCloudYield {
                 else -> output += model
             }
         }
-        // 系统自行重绘也是恢复信号；待重试不能屏蔽这条真实的恢复路径。
-        // 由 refresh() 驱动的原生调用不在这里递归请求。
-        if (refreshing.get() != true && (applied == null || retryPosted)) requestRefresh()
+        if (hasStatusBar && input.isNotEmpty()) OfficialCloudSource.noteDisplayList(present)
+        // 系统自行重绘也是恢复信号:只重算显示交接本身,不再走 synchronize→push→接手答复整条链
+        // (那条链会把原生重绘带回来,自己给自己续期)。重算失败时只在退避预算内自我续期;
+        // 预算用完后等真正的新记录或新显示对象(resetRetries),否则每一帧原生重绘都会再排一次重算。
+        if (refreshing.get() != true && applied == null && retryAttempt < RETRY_DELAYS.size) requestHandoverRefresh()
         return output
+    }
+
+    /** 在「原生正在重算」的状态下执行:出口钩子据此不重新喂入、不递归请求重算(嵌套调用保持原状)。 */
+    private fun <T> duringRefresh(block: () -> T): T {
+        val previous = refreshing.get()
+        refreshing.set(true)
+        try { return block() } finally { refreshing.set(previous) }
+    }
+
+    /**
+     * 原生重算途中报来的接收对象:这次交接已经由原来那一方执行完了,到这里再换。
+     * 换过之后按新对象重新执行一遍两条入口;连续换太多次就停下,等真正的新记录或新显示对象。
+     */
+    private fun applyPendingOwners() {
+        val pending: Map<Display, Any> = synchronized(pendingOwners) {
+            if (pendingOwners.isEmpty()) emptyMap() else {
+                linkedMapOf<Display, Any>().also { into ->
+                    pendingOwners.forEach { (target, owner) -> into[target] = owner }
+                    pendingOwners.clear()
+                }
+            }
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (ownerSwitchWindowStart > 0L && now - ownerSwitchWindowStart >= OWNER_SWITCH_WINDOW_MS) {
+            ownerSwitches = 0; ownerSwitchWindowStart = 0L
+        }
+        if (pending.isEmpty()) return
+        var changed = false
+        for ((target, owner) in pending) {
+            if (target.owner.get() !== owner) { target.owner = WeakReference(owner); changed = true }
+        }
+        if (!changed) return
+        if (ownerSwitches >= MAX_OWNER_SWITCHES) {
+            Log.w("OfficialCloud", "native display owner keeps changing; the handover waits for a real trigger")
+            return
+        }
+        if (ownerSwitchWindowStart == 0L) ownerSwitchWindowStart = now
+        ownerSwitches++
+        invalidate(); resetRetries(); requestRefresh()
     }
 
     private fun reject(keys: Set<String>, model: Any) {
@@ -184,6 +245,22 @@ object OfficialCloudYield {
 
     fun confirmedKeys(): Set<String> = confirmed
     fun yieldedCount(): Int = confirmed.size
+
+    /** 检查用:还剩几次退避重试;等于 [RETRY_DELAYS] 的个数表示这次重算已经用完自我续期的预算。 */
+    fun retryAttempts(): Int = retryAttempt
+
+    /**
+     * 这次交接要做的事:接手名单、已完成交接又结束的、预隐藏的。星河岛报来的接手情况一样时,
+     * 用它判断要不要再重算;只读,不执行。
+     */
+    fun handoverTarget(): Set<String> =
+        OfficialCloudSource.requestedNativeKeys() + finished + OfficialCloudSource.prehiddenNativeKeys()
+
+    /** 相同答复只有在已经稳定、无需处理或重试已结束时才能跳过;失败后的第一次重试不能跳过。 */
+    fun canSkipDuplicateState(): Boolean = handoverFinished &&
+        (applied != null || (!retryPosted && (retryAttempt == 0 || retryAttempt >= RETRY_DELAYS.size)))
+
+    fun isRefreshing(): Boolean = refreshing.get() == true
 
     fun refresh() {
         check(Looper.myLooper() == Looper.getMainLooper())
@@ -212,7 +289,7 @@ object OfficialCloudYield {
             }
             effective = target
             testDisplay?.let { display ->
-                runCatching { display(target) }.onSuccess {
+                runCatching { duringRefresh { display(target) } }.onSuccess {
                     confirmed = it.intersect(desired); effective = it.intersect(target)
                     // 执行器没显示成的就是这一轮没执行成:同样记为失败,出口默认拦截不拦它们
                     synchronized(failed) { failed += target - it }
@@ -226,7 +303,7 @@ object OfficialCloudYield {
                     // 只撤下这次未确认的在途事件；旧事件必须重新执行成功才继续确认。
                     val rollback = lastApplied.orEmpty().intersect(desired) + finished
                     confirmed = emptySet(); applied = null
-                    val restored = runCatching { display(rollback) }.getOrNull()
+                    val restored = runCatching { duringRefresh { display(rollback) } }.getOrNull()
                     if (restored == rollback) {
                         effective = rollback; lastApplied = rollback
                         confirmed = desired.intersect(rollback)
@@ -310,6 +387,9 @@ object OfficialCloudYield {
             }
         } finally {
             if (confirmed != oldConfirmed || effective != oldEffective) OfficialCloudSource.onDisplayReconciled()
+            // 这次重算按已经装上的对象算结果;重算途中报来的新对象到这里再换(见 observeDisplay)。
+            applyPendingOwners()
+            handoverFinished = true
         }
     }
 
@@ -328,6 +408,7 @@ object OfficialCloudYield {
     }
 
     private fun invalidate() {
+        handoverFinished = false
         val changed = confirmed.isNotEmpty() || effective != finished
         confirmed = emptySet(); effective = finished; applied = null; lastApplied = null
         // 新管理对象可能仍显示未过滤列表；先撤下岛内旧确认，再重新执行两条原生入口。
@@ -364,10 +445,23 @@ object OfficialCloudYield {
         }
     }
 
+    /** 只重算显示交接本身(系统原生重绘是恢复信号):再走一遍数据同步会把整条链又跑一遍。 */
+    private fun requestHandoverRefresh() {
+        synchronized(this) {
+            if (handoverPosted) return
+            handoverPosted = true
+        }
+        main.post {
+            synchronized(this) { handoverPosted = false }
+            refresh()
+        }
+    }
+
     /** 内容与接手规则检查使用的显示执行器；显示入口本身由独立检查覆盖。 */
     fun displayForTest(display: (Set<String>) -> Set<String>) {
         testDisplay = display
         unavailable = false
+        handoverFinished = false
         applied = null
         resetRetries()
         scheduleRetry(OfficialCloudSource.requestedNativeKeys())
@@ -381,7 +475,12 @@ object OfficialCloudYield {
         synchronized(noted) { noted.clear() }
         status = Status.UNKNOWN; confirmed = emptySet(); effective = emptySet(); finished = emptySet(); applied = null; lastApplied = null; testDisplay = null; unavailable = false
         refreshPosted = false; deliveries.clear()
+        synchronized(pendingOwners) { pendingOwners.clear() }
+        ownerSwitches = 0; ownerSwitchWindowStart = 0L; handoverPosted = false; handoverFinished = false
     }
 
     private val RETRY_DELAYS = longArrayOf(150L, 500L, 1_500L, 4_000L)
+    /** 连续为了换接收对象重算几个来回就停下。 */
+    private const val MAX_OWNER_SWITCHES = 4
+    private const val OWNER_SWITCH_WINDOW_MS = 5_000L
 }

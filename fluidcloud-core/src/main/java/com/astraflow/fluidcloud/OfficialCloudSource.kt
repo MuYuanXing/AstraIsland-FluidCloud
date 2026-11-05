@@ -25,6 +25,10 @@ object OfficialCloudSource {
     private var actions: OfficialCloudActions? = null
     @Volatile private var settings = FluidCloudSettings()
     private var reportStatus: (String) -> Unit = {}
+    /** 检查用:出口就地读取的每一次投递(正式包为空);数投递次数与记录。 */
+    @Volatile var displayIntakeObserver: ((Any) -> Unit)? = null
+    /** 检查用:星河岛报来的每一次接手情况(正式包为空);数推送次数。 */
+    @Volatile var islandStateObserver: ((Bundle) -> Unit)? = null
     private val reportedGaps = linkedSetOf<String>()
     private val diagSignatures = linkedSetOf<String>()
     private class Translated(val snapshot: CloudSnapshot, val content: CloudContent, val openable: Boolean, val imageRevision: Long, val event: SystemEvent)
@@ -63,6 +67,8 @@ object OfficialCloudSource {
         // 菜品图这类共享位置里的图在后台取,取好后重新交一次(现行规则「展开卡片总表」)
         OfficialCloudSharedImages.bind(context) { refresh() }
         AdapterBridge.start(packageName, versionCode, onAccepted = { synchronize() }, onState = ::onIslandState, onStatus = reportIsland)
+        // 握手成功时岛已经在管事,不必等第一份事件答复才允许点卡片。
+        islandActive = AdapterBridge.connected()
         reportVisibility()
         synchronize()
     }
@@ -77,7 +83,15 @@ object OfficialCloudSource {
         if (Looper.myLooper() == Looper.getMainLooper()) apply.run() else main.post(apply)
     }
 
-    fun refresh() { if (Looper.myLooper() == Looper.getMainLooper()) synchronize() else main.post { synchronize() } }
+    fun refresh() {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            synchronize()
+            OfficialCloudYield.refresh()
+        } else main.post {
+            synchronize()
+            OfficialCloudYield.refresh()
+        }
+    }
 
     /**
      * 把原生显示交接的实际执行状态报给插件页面,数据读取入口不作为成功依据。
@@ -173,7 +187,32 @@ object OfficialCloudSource {
      */
     fun exitBlocking(): Boolean = settings.access && islandActive && AdapterBridge.connected() && yieldAllowed
 
-    /** 出口上截下的记录就地读取;同一条重复进列表不重送,解析不了的数据只记一行日志。 */
+    /** 出口就地读取的记录:整批替换时保留所有仍有效的记录,不让两条记录互相顶掉形成 A/B 抖动。 */
+    private val displayRecords = linkedMapOf<String, CloudRecord>()
+    /** 非空状态栏列表里暂时缺失的记录;下一轮仍未出现才删除,空列表不参与判断。 */
+    private val displayAbsent = HashMap<String, Runnable>()
+    private const val DISPLAY_REMOVE_DELAY_MS = 1_000L
+
+    private fun sameDisplayImage(a: CloudImage?, b: CloudImage?): Boolean {
+        if (a === b) return true
+        if (a == null || b == null || a.key != b.key) return false
+        if (!java.util.Arrays.equals(a.bytes, b.bytes)) return false
+        if (a.bitmap !== b.bitmap) {
+            if (a.bitmap == null || b.bitmap == null || a.bitmap.width != b.bitmap.width || a.bitmap.height != b.bitmap.height ||
+                a.bitmap.config != b.bitmap.config || !a.bitmap.sameAs(b.bitmap)) return false
+        }
+        if (a.platform !== b.platform) {
+            if (a.platform == null || b.platform == null) return false
+            val same = runCatching {
+                a.platform.type == b.platform.type && a.platform.resPackage == b.platform.resPackage &&
+                    a.platform.resId == b.platform.resId && a.platform.uri == b.platform.uri
+            }.getOrDefault(false)
+            if (!same) return false
+        }
+        return a.copy(bytes = b.bytes, bitmap = b.bitmap, platform = b.platform) == b
+    }
+
+    /** 出口上截下的记录就地读取;同一条内容不重复同步,真实更新和多条记录都完整保留。 */
     fun receiveFromDisplay(model: Any) {
         main.post {
             runCatching {
@@ -186,8 +225,39 @@ object OfficialCloudSource {
                         "display-exit record unreadable on ${raw.javaClass.name}; hidden without reading")
                     return@post
                 }
-                acceptCaptured("display-exit", OfficialCloudHook.nextRevision(), CloudChange.REPLACE, listOf(record))
+                val key = record.snapshot.nativeKey
+                val previous = displayRecords[key]
+                val unchanged = previous != null && previous.content == record.content &&
+                    sameDisplayImage(previous.snapshot.icon, record.snapshot.icon) &&
+                    previous.snapshot.copy(revision = record.snapshot.revision, sourceUpdatedAtMs = record.snapshot.sourceUpdatedAtMs,
+                        receivedAtElapsedMs = record.snapshot.receivedAtElapsedMs, icon = record.snapshot.icon,
+                        nativeModel = record.snapshot.nativeModel, notification = record.snapshot.notification,
+                        nativeViews = record.snapshot.nativeViews, nativeCard = record.snapshot.nativeCard,
+                        nativeSeedling = record.snapshot.nativeSeedling) == record.snapshot
+                if (unchanged) return@post
+                displayRecords[key] = record
+                displayAbsent.remove(key)?.let(main::removeCallbacks)
+                displayIntakeObserver?.invoke(record)
+                acceptCaptured("display-exit", OfficialCloudHook.nextRevision(), CloudChange.REPLACE, displayRecords.values.toList())
             }.onFailure { reportFailure("display-exit", it, OfficialCloudReflection.describe(model)) }
+        }
+    }
+
+    /** 非空状态栏列表的缺席只登记延迟清理;真正删除发生在回到主线程之后,不在 filter 调用栈里重入。 */
+    fun noteDisplayList(present: Set<String>) {
+        for (key in displayRecords.keys) {
+            if (key in present) {
+                displayAbsent.remove(key)?.let(main::removeCallbacks)
+            } else if (displayAbsent[key] == null) {
+                val task = Runnable {
+                    displayAbsent.remove(key)
+                    if (displayRecords.remove(key) != null) {
+                        acceptCaptured("display-exit", OfficialCloudHook.nextRevision(), CloudChange.REPLACE, displayRecords.values.toList())
+                    }
+                }
+                displayAbsent[key] = task
+                main.postDelayed(task, DISPLAY_REMOVE_DELAY_MS)
+            }
         }
     }
 
@@ -284,7 +354,15 @@ object OfficialCloudSource {
     }
 
     fun acceptCaptured(owner: String, revision: Long, change: CloudChange, records: List<CloudRecord>, removed: Set<String> = emptySet()) {
-        if (store.apply(owner, revision, change, records, removed)) synchronize()
+        val applied = store.apply(owner, revision, change, records, removed)
+        if (applied && owner != "display-exit") {
+            val gone = if (change == CloudChange.REMOVE) removed else records.filter { it.snapshot.ended }.map { it.snapshot.nativeKey }.toSet()
+            for (key in gone) {
+                displayRecords.remove(key)
+                displayAbsent.remove(key)?.let(main::removeCallbacks)
+            }
+        }
+        if (applied) synchronize()
     }
 
 
@@ -343,22 +421,45 @@ object OfficialCloudSource {
             actions?.retain(records.mapTo(HashSet()) { it.snapshot.key })
             AdapterBridge.push(events, settings, store.aliveIdentities())
             // 预隐藏集合跟着数据走:通知胶囊新到、结束时重算显示交接,不依赖接手答复
-            val prehiddenNow = prehiddenNativeKeys()
-            val prehiddenChanged = prehiddenNow != prehiddenClaims
-            prehiddenClaims = prehiddenNow
-            if (remapClaims() || prehiddenChanged) OfficialCloudYield.resetRetries()
+            prehiddenClaims = prehiddenNativeKeys()
+            remapClaims()
+            // 只有真正的新记录(系统记录编号第一次出现)才重置退避预算:接手名单增减、预隐藏抖动都不重置,
+            // 否则一条永远执行不了的事件会让退避预算无限复活,每一轮都再重算一遍。
+            val live = store.allNativeKeys()
+            if ((live - knownNativeKeys).isNotEmpty()) OfficialCloudYield.resetRetries()
+            knownNativeKeys = live
         }.onFailure { reportFailure("synchronize", it, null) }
     }
 
+    /** 星河岛报来的接手情况(对比上一次,只留这次真正要用的几组) */
+    private data class IslandState(val handled: Set<String>, val spent: Set<String>, val always: Set<String>,
+                                   val active: Boolean, val yieldAllowed: Boolean)
+
+    /** 最近一次星河岛报来的接手情况;一样的推送不再重算显示交接。 */
+    private var lastIslandState: IslandState? = null
+
     /** 星河岛报来接手情况(主线程上) */
     fun onIslandState(state: Bundle) {
+        if (OfficialCloudYield.isRefreshing()) {
+            // 重算途中到达的接手情况不能丢,也不能用它去重后续重试;本轮结束后按最新状态再算。
+            main.post { onIslandState(state) }
+            return
+        }
+        islandStateObserver?.invoke(state)
         fun set(key: String) = state.getStringArray(key)?.toSet().orEmpty()
-        handledIdentities = set(EventBridge.KEY_HANDLED)
-        spentIdentities = set(EventBridge.KEY_SPENT)
-        alwaysIdentities = set(EventBridge.KEY_ALWAYS)
-        islandActive = state.getBoolean(EventBridge.KEY_ACTIVE)
-        yieldAllowed = state.getBoolean(EventBridge.KEY_YIELD_ALLOWED)
-        if (remapClaims()) OfficialCloudYield.resetRetries()
+        val next = IslandState(set(EventBridge.KEY_HANDLED), set(EventBridge.KEY_SPENT), set(EventBridge.KEY_ALWAYS),
+            state.getBoolean(EventBridge.KEY_ACTIVE), state.getBoolean(EventBridge.KEY_YIELD_ALLOWED))
+        val targetBefore = OfficialCloudYield.handoverTarget()
+        handledIdentities = next.handled
+        spentIdentities = next.spent
+        alwaysIdentities = next.always
+        islandActive = next.active
+        yieldAllowed = next.yieldAllowed
+        remapClaims()
+        // 接手情况一样、要交接的记录也一样:不必再重算(重算又会跟着原生重绘互相续命)。
+        val same = next == lastIslandState && targetBefore == OfficialCloudYield.handoverTarget() && OfficialCloudYield.canSkipDuplicateState()
+        lastIslandState = next
+        if (same) return
         applyingIslandState.set(true)
         try { OfficialCloudYield.refresh() } finally { applyingIslandState.set(false) }
     }
@@ -373,6 +474,9 @@ object OfficialCloudSource {
 
     /** 最近一次 synchronize 算出的预隐藏集合;变了才让显示交接重算 */
     private var prehiddenClaims: Set<String> = emptySet()
+
+    /** 见过的系统记录编号;第一次出现的记录才算真正的新记录(只有它重置退避预算) */
+    private var knownNativeKeys: Set<String> = emptySet()
 
     /**
      * 星河岛报来的事件身份换成系统记录编号(系统记录会换,同一件事可能有几条);变了返回真。
@@ -403,6 +507,9 @@ object OfficialCloudSource {
         handledIdentities = emptySet(); spentIdentities = emptySet(); alwaysIdentities = emptySet()
         nativeClaims = emptySet(); spentClaims = emptySet(); alwaysClaims = emptySet(); prehiddenClaims = emptySet()
         notedUnreadable.clear()
+        displayIntakeObserver = null; islandStateObserver = null
+        displayAbsent.values.forEach(main::removeCallbacks); displayAbsent.clear()
+        displayRecords.clear(); lastIslandState = null; knownNativeKeys = emptySet()
         OfficialCloudImages.clear()
         OfficialCloudTemplates.clear()
         OfficialCloudSystemTips.clear()
