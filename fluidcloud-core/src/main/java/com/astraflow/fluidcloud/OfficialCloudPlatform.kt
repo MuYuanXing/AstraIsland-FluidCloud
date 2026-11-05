@@ -22,7 +22,7 @@ object OfficialCloudPlatform {
         if (c17) modern() else legacy()
 
     /** C17 将旧的日志文字移到延迟日志对象,按记录管理、显示位置和列表操作识别三个数据入口。 */
-    fun scanC17(bridge: DexKitBridge, verified: Boolean, interceptors: List<String>,
+    fun scanC17(bridge: DexKitBridge, interceptors: List<String>,
                 observers: List<String>): OfficialCloudHook.PluginScan {
         val refresh = bridge.findMethod {
             matcher {
@@ -48,7 +48,7 @@ object OfficialCloudPlatform {
             } else emptyList()
             listOf(method) + implementations
         }?.distinctBy { it.descriptor }?.map { it.shape() }.orEmpty()
-        return OfficialCloudHook.PluginScan(listeners, verified, interceptors, observers,
+        return OfficialCloudHook.PluginScan(listeners, interceptors, observers,
             c17Renderers(displays), refresh?.ref(), api = Api.C17)
     }
 

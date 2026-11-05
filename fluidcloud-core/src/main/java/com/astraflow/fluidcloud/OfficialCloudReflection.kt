@@ -1,14 +1,11 @@
 package com.astraflow.fluidcloud
 
-import android.graphics.Bitmap
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
 
 /** 只读取已加载对象；不初始化第二套厂商引擎，不调用 parseDataByEngine 改写系统回调。 */
 object OfficialCloudReflection {
-    const val SEEDLING = "com.oplus.seedling.sdk.seedling.ISeedling"
     const val SERVICE_INFO = "pantanal.decision.ServiceInfo"
-    private const val MAX_NODES = 512
     private const val MAX_TEXT = 16_384
     private const val MAX_DATA = 256 * 1024
     private const val UI_DATA_KEY = "ui_data"
@@ -100,17 +97,14 @@ object OfficialCloudReflection {
     fun nativeKey(model: Any): String? = if (model is OfficialCloudSeedlingReader.Entry) model.key
         else (call(model, "getKey") as? String)?.takeIf { it.isNotBlank() && it.length <= 1024 }
 
-    /**
-     * 到货诊断用的一句话:服务号、卡片引擎在不在、内容树有没有、数据有多大。只读字段,不调用会改状态的方法。
-     * 通知转成的系统卡片写成 common:包名。
-     */
+    /** 到货诊断用的一句话:服务号与数据大小;通知转成的系统卡片写成 common:包名:通知编号。只读字段,不调用会改状态的方法。 */
     fun describe(model: Any): String {
         if (call(model, "getSourceType")?.toString() == "SOURCE_COMMON") {
-            val sbn = fieldOfType(model, "android.service.notification.StatusBarNotification") as? android.service.notification.StatusBarNotification
+            val sbn = fieldOfType(model, SBN) as? android.service.notification.StatusBarNotification
             return "common:${sbn?.packageName}:${sbn?.id}"
         }
         if (model !is OfficialCloudSeedlingReader.Entry) return "${model.javaClass.name} (not read)"
-        return "${text(call(model.service, "getServiceId"))} engine=${model.seedling != null} tree=${call(model.ui, "getRootNode") != null} " +
+        return "${text(call(model.service, "getServiceId"))} " +
             "data=${(call(model.ui, "getData") as? ByteArray)?.size ?: 0}"
     }
 
@@ -159,33 +153,15 @@ object OfficialCloudReflection {
         return entry != null && (0 until hosts.length()).any { hosts.opt(it) == entry }
     }
 
-    /**
-     * 刚送到、星流还没读过的系统服务记录:只取定「默认让不让位」要用的几项(服务号、来源应用、录屏录音此刻是哪一页),
-     * 不读图、不读内容树。[ui] 是刚送到的卡片内容(还没交给记录),没有时为 null。
-     */
-    fun facts(service: Any, ui: Any?, user: Int = 0, nativeKey: String = ""): CloudSnapshot? {
-        val serviceId = text(call(service, "getServiceId")).takeIf { it.isNotBlank() } ?: return null
-        val options = call(service, "getNewSeedlingCardOptions")
-        val pkg = text(call(ui, "getDataSourcePkgName")).ifBlank {
-            text(call(options, "getDataSourcePkgName")).ifBlank { text(call(service, "getHostPackage")) }
-        }
-        val raw = if (OfficialCloudServices.recorder(serviceId)) call(ui, "getData") as? ByteArray else null
-        return CloudSnapshot(nativeKey, user, pkg, serviceId, text(call(service, "getServiceInstanceId")),
-            (call(service, "getTimeStamp") as? Number)?.toLong() ?: 0L, 0, hostPackage = text(call(service, "getHostPackage")), pageId = page(raw))
-    }
-
-    /** 通知变成的系统胶囊:定「默认让不让位」要用的几项。 */
-    fun commonFacts(model: Any): CloudSnapshot? {
-        val sbn = fieldOfType(model, SBN) as? android.service.notification.StatusBarNotification ?: return null
-        return CloudSnapshot(nativeKey(model) ?: return null, (call(model, "getUserId") as? Number)?.toInt() ?: 0, sbn.packageName,
-            "common:${sbn.packageName}:${sbn.id}", sbn.key, 0, 0, notificationIds = setOf(sbn.id), notification = sbn)
-    }
-
     private const val SBN = "android.service.notification.StatusBarNotification"
 
-    fun snapshot(model: Any, revision: Long, reviewedPlugin: Boolean): CloudSnapshot? {
+    /**
+     * 一条系统记录的原始事实:系统服务卡片读服务信息与卡片内容(数据、图、应用给的界面数据),通知变成的胶囊读那条通知。
+     * 不读系统卡片引擎排好的内容树。
+     */
+    fun snapshot(model: Any, revision: Long): CloudSnapshot? {
         if (!isOfficial(model)) return null
-        if (model !is OfficialCloudSeedlingReader.Entry) return if (isCommon(model)) commonSnapshot(model, revision, reviewedPlugin) else null
+        if (model !is OfficialCloudSeedlingReader.Entry) return if (isCommon(model)) commonSnapshot(model, revision) else null
         val service = model.service
         val ui = model.ui
         val options = call(service, "getNewSeedlingCardOptions") ?: call(service, "getSeedlingCardOptions")
@@ -198,8 +174,6 @@ object OfficialCloudReflection {
         val instance = text(call(service, "getServiceInstanceId")).ifBlank { text(call(service, "getInstanceId")) }
         val nativeKey = model.key
         val time = (call(service, "getTimeStamp") as? Number)?.toLong() ?: return null
-        val nodes = intArrayOf(0)
-        val root = node(call(ui, "getRootNode"), nodes, 0) ?: remoteNode(call(ui, "getRemoteViewUIData"))
         val images = linkedMapOf<String, CloudImage>()
         var imageBudget = 8 * 1024 * 1024
         // 图片内容和上次一样时沿用上次拷好的那一份,不再拷贝、不再算指纹(导航、秒表每秒送一次)
@@ -213,49 +187,29 @@ object OfficialCloudReflection {
                 if (uri.isNotBlank()) images[uri] = image
             }
         }
-        val remote = call(ui, "getRemoteViewUIData")
-        (call(remote, "getImageDataMap") as? Map<*, *>)?.entries?.take(64)?.forEach { (key, data) ->
-            (call(data, "getData") as? ByteArray)?.takeIf { it.size <= OfficialCloudImages.MAX_BYTES && it.size <= imageBudget }?.let {
-                imageBudget -= it.size
-                images[key.toString()] = OfficialCloudImages.copyOf("$nativeKey|remote|$key", key.toString(), it)
-            }
-        }
         val ids = ((call(ui, "getNotificationIdList") ?: call(options, "getNotificationIdList")) as? Collection<*>)
             .orEmpty().take(64).mapNotNull { (it as? Number)?.toInt() }.toSet()
         val entrance = model.entrance
         val entry = entranceCode(entrance)
-        // 卡片引擎可能比内容晚建好:稍后补读时再从系统卡片身上取一次
-        val seedling = model.seedling ?: call(model.card, "getInnerCard")
-        // 卡片数据:记录上那份读不到时,用卡片引擎自己持有的那一份;提供方还没送数据时,和卡片引擎一样用发起时带来的初始数据;
-        // 系统界面自己做的提示(手电筒、勿扰、响铃模式)这几处都没有,用系统界面生成提示时的那一份
-        val sent = (call(ui, "getData") as? ByteArray)?.takeIf { it.isNotEmpty() }
-            ?: (call(call(seedling, "getUIData"), "getData") as? ByteArray)?.takeIf { it.isNotEmpty() }
-        val initial = if (sent == null) initData(service) else null
-        val raw = sent ?: initial ?: OfficialCloudSystemTips.data(serviceId)
-        // 初始数据是服务发起那一刻写下的(服务时间戳是墙上时钟):按那一刻算收到的时间,稍后重读时倒计时不从头算
-        val nowElapsed = android.os.SystemClock.elapsedRealtime()
-        val wallNow = System.currentTimeMillis()
-        val receivedAt = initial?.let { time.takeIf { it in 1..wallNow }?.let { nowElapsed - (wallNow - it) } } ?: nowElapsed
+        // 卡片数据:提供方送来的那一份;还没送时和卡片引擎一样用发起时带来的初始数据;
+        // 系统界面自己做的提示(手电筒、勿扰、响铃模式)没有这两份,用系统界面生成提示时的那一份
+        val raw = (call(ui, "getData") as? ByteArray)?.takeIf { it.isNotEmpty() } ?: initData(service) ?: OfficialCloudSystemTips.data(serviceId)
         val (instant, remindLevel) = instantFacts(service, ui, options)
-        val shake = shouldShake(ui, options)
         return CloudSnapshot(nativeKey, user, pkg, serviceId, instance, time, revision, entrance,
-            text(call(ui, "getTitle")), text(call(ui, "getDes")), root, images,
-            (call(ui, "getIcon") as? Bitmap)?.takeUnless { it.isRecycled }?.let { CloudImage("icon:$nativeKey:${it.generationId}", bitmap = it) },
-            ids, seedlingShows(service, ui, entry, lockScreen = false),
-            seedlingShows(service, ui, entry, lockScreen = true),
-            nativeCard = model.card,
-            nativeSeedling = seedling,
+            images = images,
+            notificationIds = ids,
+            visible = seedlingShows(service, ui, entry, lockScreen = false),
+            lockScreenAllowed = seedlingShows(service, ui, entry, lockScreen = true),
+            remoteData = raw.takeIf { serviceId in OfficialRemotePage.SERVICES },
             sourceUpdatedAtMs = revision,
             ended = (call(ui, "getControlAction") as? Number)?.toInt() == 1,
             data = data(raw),
             hostPackage = text(call(service, "getHostPackage")),
             serviceName = ((call(service, "getExtras") as? Map<*, *>)?.get("serviceTitleName") as? String).orEmpty().take(64),
-            templateVersion = (call(service, "getVersionCode") as? Number)?.toLong() ?: text(call(seedling, "getUpkVersion")).toLongOrNull() ?: 0L,
-            // 页面按卡片数据写明的 options.pageId(卡片引擎也按它选页);不去问卡片引擎,免得在它排版前提前触发它的内部初始化
+            templateVersion = (call(service, "getVersionCode") as? Number)?.toLong() ?: 0L,
+            // 页面按卡片数据写明的 options.pageId(卡片引擎也按它选页)
             pageId = page(raw),
-            receivedAtElapsedMs = receivedAt,
-            rendered = root != null,
-            instant = instant, remindLevel = remindLevel, shake = shake)
+            instant = instant, remindLevel = remindLevel, shake = shouldShake(ui, options))
     }
 
     /** 这一版数据要不要胶囊抖一下:卡片数据(或发起提示时的选项)里的扩展动作表写了 shouldShake 为真 */
@@ -318,62 +272,20 @@ object OfficialCloudReflection {
         return runCatching { org.json.JSONObject(String(raw, Charsets.UTF_8)) }.getOrNull()
     }
 
-    /**
-     * 通知变成的系统胶囊。系统已经画好的胶囊控件只在核对过的那一版插件上读([reviewedPlugin],取控件用的是那一版里的短名字),
-     * 别的版本只读通知本身。
-     */
-    private fun commonSnapshot(model: Any, revision: Long, reviewedPlugin: Boolean): CloudSnapshot? {
+    /** 通知变成的系统胶囊:读那条通知(内容由 OfficialDirectPage 照系统流体云的解析读成内容树)。 */
+    private fun commonSnapshot(model: Any, revision: Long): CloudSnapshot? {
         val sbn = fieldOfType(model, SBN) as? android.service.notification.StatusBarNotification ?: return null
         val user = (call(model, "getUserId") as? Number)?.toInt()?.takeIf { it >= 0 } ?: return null
-        val notification = sbn.notification
-        val extras = notification.extras
-        val title = extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val text = extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT)?.toString()
-            ?: extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString().orEmpty()
-        val views = linkedMapOf<Int, MutableList<android.view.View>>()
-        if (reviewedPlugin) (call(model, "j") as? Collection<*>)?.take(16)?.forEach { wrapper ->
-            val size = when (call(wrapper, "l")?.toString()) { "VIEW_SIZE_LG" -> 9; "VIEW_SIZE_MD" -> 8; "VIEW_SIZE_SM" -> 7; else -> null }
-            val view = call(wrapper, "n", false) as? android.view.View
-            if (size != null && view != null) views.getOrPut(size) { mutableListOf() }.add(view)
-        }
         val entrance = entranceName(model) ?: "UNKNOWN"
         val entry = entranceCode(entrance)
         return CloudSnapshot(nativeKey(model) ?: return null, user, sbn.packageName,
             "common:${sbn.packageName}:${sbn.id}", sbn.key, 0, revision,
             entrance = entrance,
-            title = title, description = text,
-            icon = (notification.getLargeIcon() ?: notification.smallIcon)?.let { CloudImage("notification:${sbn.key}", platform = it) },
             notificationIds = setOf(sbn.id),
             visible = commonShows(sbn, entry, lockScreen = false),
             lockScreenAllowed = commonShows(sbn, entry, lockScreen = true),
-            nativeModel = model, notification = sbn, nativeViews = views,
-            sourceUpdatedAtMs = revision,
-            receivedAtElapsedMs = android.os.SystemClock.elapsedRealtime())
-    }
-
-    private fun node(value: Any?, count: IntArray, depth: Int): CloudNode? {
-        if (value == null) return null
-        if (depth > 20 || ++count[0] > MAX_NODES) return CloudNode("truncated")
-        val props = (call(value, "getProps") as? Map<*, *>)?.entries?.take(64)?.associate {
-            text(it.key).take(100) to text(it.value)
-        }.orEmpty()
-        return CloudNode(text(call(value, "getType")), text(call(value, "getLevel")), props,
-            (call(value, "getChildren") as? Collection<*>)?.take((MAX_NODES - count[0] + 1).coerceAtLeast(1))?.mapNotNull { node(it, count, depth + 1) }.orEmpty())
-    }
-
-    private fun remoteNode(remote: Any?): CloudNode? {
-        if (remote == null) return null
-        val children = mutableListOf<CloudNode>()
-        (call(remote, "getTextDataMap") as? Map<*, *>)?.entries?.take(64)?.forEach { (key, data) ->
-            children += CloudNode("text", key.toString(), mapOf("text" to text(call(data, "getText"))))
-        }
-        (call(remote, "getImageDataMap") as? Map<*, *>)?.keys?.take(64)?.forEach {
-            children += CloudNode("image", it.toString(), mapOf("src" to it.toString()))
-        }
-        (call(remote, "getProgressDataMap") as? Map<*, *>)?.entries?.take(16)?.forEach { (key, data) ->
-            children += CloudNode("progress", key.toString(), mapOf("percent" to text(call(data, "getProgressPercent"))))
-        }
-        return children.takeIf { it.isNotEmpty() }?.let { CloudNode("remote", children = it) }
+            notification = sbn,
+            sourceUpdatedAtMs = revision)
     }
 
     fun text(value: Any?): String = value?.toString()?.take(MAX_TEXT).orEmpty()

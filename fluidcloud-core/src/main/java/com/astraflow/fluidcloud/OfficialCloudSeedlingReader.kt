@@ -33,9 +33,9 @@ object OfficialCloudSeedlingReader {
 
     /**
      * 一张系统服务卡片在一个显示位置上此刻的样子:事件编号(和系统流体云给这件事的编号一样:服务号|服务实例|用户|服务时间戳)、
-     * 用户、显示位置,以及读到的 OPPO 接口对象——服务信息、最近一份卡片内容(还没送到时为空)、系统卡片和卡片引擎(点按钮用)。
+     * 用户、显示位置,以及读到的 OPPO 接口对象——服务信息和最近一份卡片内容(还没送到时为空)。
      */
-    class Entry(val key: String, val user: Int, val entrance: String, val service: Any, val ui: Any?, val card: Any?, val seedling: Any?)
+    class Entry(val key: String, val user: Int, val entrance: String, val service: Any, val ui: Any?)
 
     /** 一个显示位置的记录管理:编号、显示位置、收到过名单没有、此刻的卡片(照名单的先后) */
     private class Owner(val id: String, val entrance: String, manager: Any) {
@@ -55,7 +55,7 @@ object OfficialCloudSeedlingReader {
     @Volatile var revisions: () -> Long = OfficialCloudHook::nextRevision
     /** 整份交出去、撤掉整份的去处(检查里换成记下来) */
     @Volatile var deliver: (owner: String, revision: Long, entries: List<Entry>) -> Unit =
-        { owner, revision, entries -> OfficialCloudSource.receive(owner, revision, CloudChange.REPLACE, entries, false) }
+        { owner, revision, entries -> OfficialCloudSource.receive(owner, revision, CloudChange.REPLACE, entries) }
     @Volatile var drop: (Set<String>) -> Unit = { OfficialCloudSource.dropOwners(it) }
 
     /** 系统处理本次服务名单后读取其当前记录。 */
@@ -82,8 +82,8 @@ object OfficialCloudSeedlingReader {
                 // 系统已处理本次名单:重建时只认领它当前的新记录,不沿用旧内容。
                 val rebuild = OfficialCloudReflection.call(service, "getForceRebuild") == true
                 next[key] = when {
-                    old != null && !rebuild && old.ui != null -> Entry(key, user, entrance, service, old.ui, old.card, old.seedling)
-                    else -> adopt(existing, key, user, entrance, service)?.also(adoptions::add) ?: Entry(key, user, entrance, service, null, null, null)
+                    old != null && !rebuild && old.ui != null -> Entry(key, user, entrance, service, old.ui)
+                    else -> adopt(existing, key, user, entrance, service)?.also(adoptions::add) ?: Entry(key, user, entrance, service, null)
                 }
             }
             val added = next.keys - owner.entries.keys
@@ -101,7 +101,7 @@ object OfficialCloudSeedlingReader {
 
     /**
      * 挂钩装好之前就在的卡片(系统界面刚启动、插件重新加载时,挂钩在后台找挂点这一会儿里来的):记录管理手上已有这件事的记录时,
-     * 从记录身上取最近一份内容和系统卡片(都是 OPPO 接口里的对象),不用等它下一次更新。
+     * 从记录身上取最近一份内容(OPPO 接口里的对象),不用等它下一次更新。
      */
     private fun adopt(models: List<Any>, key: String, user: Int, entrance: String, service: Any): Entry? {
         val model = models.firstOrNull { model ->
@@ -110,8 +110,7 @@ object OfficialCloudSeedlingReader {
         val card = OfficialCloudReflection.fieldOfType(model, CARD)
         val ui = OfficialCloudReflection.call(card?.let { OfficialCloudReflection.fieldOfType(it, PANTANAL_DATA) }, "getSeedlingUIData")
             ?: OfficialCloudReflection.fieldOfType(model, SEEDLING_UI_DATA) ?: return null
-        val seedling = OfficialCloudReflection.fieldOfType(model, OfficialCloudReflection.SEEDLING) ?: OfficialCloudReflection.call(card, "getInnerCard")
-        return Entry(key, user, entrance, service, ui, card, seedling)
+        return Entry(key, user, entrance, service, ui)
     }
 
     /** 记录管理手上的记录(带服务信息的对象):在它身上的集合里,或者再往下一层的集合里 */
@@ -157,11 +156,9 @@ object OfficialCloudSeedlingReader {
                 if (owner.entries.remove(located.key) != null) emit(owner)
                 return
             }
-            val seedling = OfficialCloudReflection.fieldOfType(located.model, OfficialCloudReflection.SEEDLING)
-                ?: OfficialCloudReflection.call(located.card, "getInnerCard") ?: known?.seedling
-            val entry = Entry(located.key, located.user, located.entrance, located.service, ui, located.card ?: known?.card, seedling)
+            val entry = Entry(located.key, located.user, located.entrance, located.service, ui)
             owner.entries[located.key] = entry
-            // 到货诊断(正式包也写进岛的日志):每个显示位置按「服务号、卡片引擎在不在、内容树有没有」签名写一行,签名变了才写
+            // 到货诊断(正式包也写进岛的日志):每个显示位置按服务号签名写一行,签名变了才写
             val line = "${owner.id}(${owner.entrance}) ${OfficialCloudReflection.describe(entry)}"
             noteOnce("content:${line.substringBefore(" data=")}", "content: $line known=${known != null}")
             emit(owner)
@@ -185,8 +182,8 @@ object OfficialCloudSeedlingReader {
         byId.values.mapNotNullTo(mutableSetOf()) { it.manager.get()?.javaClass?.classLoader }
     }
 
-    /** 卡片内容送到的那一处属于哪件事:接收对象身上的记录管理(带显示位置)和记录(带服务信息、系统卡片)。让位也按这个认。 */
-    class Located(val manager: Any, val entrance: String, val model: Any, val service: Any, val card: Any?, val key: String, val user: Int)
+    /** 卡片内容送到的那一处属于哪件事:接收对象身上的记录管理(带显示位置)和记录(带服务信息) */
+    class Located(val manager: Any, val entrance: String, val service: Any, val key: String, val user: Int)
 
     fun locate(interceptor: Any): Located? {
         val manager = managerOf(interceptor) ?: return null
@@ -195,15 +192,8 @@ object OfficialCloudSeedlingReader {
         val service = OfficialCloudReflection.fieldOfType(model, OfficialCloudReflection.SERVICE_INFO) ?: return null
         val user = currentUser()
         val key = keyOf(service, user) ?: return null
-        return Located(manager, entrance, model, service, OfficialCloudReflection.fieldOfType(model, CARD), key, user)
+        return Located(manager, entrance, service, key, user)
     }
-
-    /**
-     * 这一份卡片内容星流接不接得住:接收对象认得出(记录管理、记录、服务信息都在),内容里也有卡片数据。
-     * 源头拦截(OfficialCloudGate)截住前先核这一遍,接不住的不截,交给系统照常处理。
-     */
-    fun readable(interceptor: Any, data: Any?): Boolean =
-        locate(interceptor) != null && OfficialCloudReflection.call(data, "getSeedlingUIData") != null
 
     /** 事件编号,和系统流体云给这件事的编号一样:服务号|服务实例|用户|服务时间戳 */
     fun keyOf(service: Any, user: Int): String? {
@@ -286,7 +276,7 @@ object OfficialCloudSeedlingReader {
         synchronized(this) { owners.clear(); byId.clear(); retired.clear() }
         synchronized(noted) { noted.clear() }
         revisions = OfficialCloudHook::nextRevision
-        deliver = { owner, revision, entries -> OfficialCloudSource.receive(owner, revision, CloudChange.REPLACE, entries, false) }
+        deliver = { owner, revision, entries -> OfficialCloudSource.receive(owner, revision, CloudChange.REPLACE, entries) }
         drop = { OfficialCloudSource.dropOwners(it) }
     }
 }

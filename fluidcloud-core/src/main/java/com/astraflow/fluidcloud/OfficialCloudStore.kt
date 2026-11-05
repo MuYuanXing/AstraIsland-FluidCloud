@@ -2,11 +2,11 @@ package com.astraflow.fluidcloud
 
 /** 一个监听器的一份全量列表只替换自己的记录，不能清除其它显示位置或用户的活动。 */
 class OfficialCloudStore {
-    private data class Owner(val revision: Long, val entries: Map<String, CloudRecord>)
+    private data class Owner(val revision: Long, val entries: Map<String, CloudSnapshot>)
     private val owners = LinkedHashMap<String, Owner>()
     private val ended = linkedSetOf<String>()
 
-    fun apply(owner: String, revision: Long, change: CloudChange, records: List<CloudRecord>, removedKeys: Set<String> = emptySet()): Boolean {
+    fun apply(owner: String, revision: Long, change: CloudChange, records: List<CloudSnapshot>, removedKeys: Set<String> = emptySet()): Boolean {
         val previous = owners[owner]
         if (previous != null && revision <= previous.revision) return false
         val next = if (change == CloudChange.REPLACE) linkedMapOf() else LinkedHashMap(previous?.entries.orEmpty())
@@ -14,10 +14,8 @@ class OfficialCloudStore {
             removedKeys.forEach(next::remove)
         } else {
             records.forEach {
-                val old = next[it.snapshot.nativeKey]
-                val merged = if (old != null && old.snapshot.key == it.snapshot.key) it.copy(content = it.content.copy(buttons = keepButtons(old.content.buttons, it.content.buttons, it.snapshot.serviceId == OfficialCloudServices.CALL))) else it
-                next[it.snapshot.nativeKey] = merged
-                if (merged.snapshot.ended) ended.add(merged.snapshot.key)
+                next[it.nativeKey] = it
+                if (it.ended) ended.add(it.key)
             }
         }
         owners[owner] = Owner(revision, next)
@@ -25,68 +23,24 @@ class OfficialCloudStore {
         return true
     }
 
-    fun active(): List<CloudRecord> = owners.values.flatMap { it.entries.values }
-        .groupBy { it.snapshot.key }
+    /**
+     * 每件事现在的一条记录:同一件事有几个显示位置送来记录时,用最新送来的那一条。
+     * 显示位置暂时隐藏与服务结束是两回事,只有明确结束才封存整件事。
+     */
+    fun active(): List<CloudSnapshot> = owners.values.flatMap { it.entries.values }
+        .groupBy { it.key }
         .mapNotNull { (_, variants) ->
-            // 显示位置暂时隐藏与服务结束是两回事。只有明确结束才封存整件事。
-            val visible = variants.filter { it.snapshot.visible && it.snapshot.key !in ended }
-            val newestTime = visible.maxOfOrNull { it.snapshot.sourceUpdatedAtMs } ?: return@mapNotNull null
-            visible.filter { it.snapshot.sourceUpdatedAtMs == newestTime }
-                .maxWithOrNull(compareBy<CloudRecord> { it.content.complete }
-                    .thenBy { it.content.body.length + it.content.buttons.size * 30 }.thenBy { it.snapshot.revision })
+            variants.filter { it.visible && it.key !in ended }
+                .maxWithOrNull(compareBy<CloudSnapshot> { it.sourceUpdatedAtMs }.thenBy { it.revision })
         }
 
     fun clear() { owners.clear(); ended.clear() }
-    fun enrich(owner: String, expectedRevision: Long, records: List<CloudRecord>): Boolean {
-        val current = owners[owner]?.takeIf { it.revision == expectedRevision } ?: return false
-        val next = LinkedHashMap(current.entries)
-        records.forEach { record ->
-            val old = next[record.snapshot.nativeKey]
-            if (old != null && old.snapshot.key == record.snapshot.key) {
-                val merged = record.copy(content = record.content.copy(buttons = keepButtons(old.content.buttons, record.content.buttons, record.snapshot.serviceId == OfficialCloudServices.CALL)))
-                next[record.snapshot.nativeKey] = merged
-                if (merged.snapshot.ended) ended.add(merged.snapshot.key)
-            }
-        }
-        owners[owner] = Owner(current.revision, next)
-        return true
-    }
-    fun revision(owner: String): Long? = owners[owner]?.revision
-    fun removeOwner(owner: String) = owners.remove(owner) != null
     /** 已经不在的监听者留下的记录一并撤掉(插件重载后换了新对象),不留下永远不会结束的卡片。 */
     fun removeOwners(dead: Set<String>): Boolean = owners.keys.removeAll(dead)
 
-    /**
-     * 通话卡片刷新时常常暂时没有按钮,沿用还能按的那几个;其它卡片按这一次送来的为准,
-     * 按钮消失就不再显示(现行规则「系统事件接入」)。
-     */
-    private fun keepButtons(previous: List<CloudButton>, incoming: List<CloudButton>, call: Boolean): List<CloudButton> {
-        if (!call) return incoming
-        if (incoming.isEmpty()) return previous
-        return incoming.map { button ->
-            val role = OfficialCloudCallButtons.roleOf(button.label)
-            val old = if (role == OfficialCloudCallButtons.Role.OTHER) previous.firstOrNull { it.id == button.id }
-                else previous.firstOrNull { OfficialCloudCallButtons.roleOf(it.label) == role }
-            if (old == null || old.id == button.id) button else button.copy(id = old.id)
-        }
-    }
+    fun aliveIdentities(): Set<String> = owners.values.flatMap { it.entries.values }.mapTo(linkedSetOf()) { it.key } - ended
 
-    fun keys(): Set<String> = active().mapTo(linkedSetOf()) { it.snapshot.key }
-    /** 所有显示位置送来的、还在的系统记录编号(不论系统此刻显不显示、结没结束) */
-    fun allNativeKeys(): Set<String> = owners.values.flatMapTo(linkedSetOf()) { it.entries.keys }
-    fun aliveIdentities(): Set<String> = owners.values.flatMap { it.entries.values }.mapTo(linkedSetOf()) { it.snapshot.key } - ended
-    fun aliveNativeKeys(): Set<String> = owners.values.flatMap { it.entries.values }
-        .filter { it.snapshot.key !in ended }.mapTo(linkedSetOf()) { it.snapshot.nativeKey }
-    fun previous(owner: String, nativeKey: String): CloudRecord? = owners[owner]?.entries?.get(nativeKey)
-    fun nativeKeys(key: String): Set<String> = owners.values.flatMap { it.entries.values }.filter { it.snapshot.key == key }
-        .mapTo(linkedSetOf()) { it.snapshot.nativeKey }
-
-    /** 通知变成的胶囊(不是系统服务推送的卡片)的记录编号;接入开且岛在时这些不等接手确认就先藏 */
-    fun commonNativeKeys(): Set<String> = owners.values.flatMap { it.entries.values }
-        .filter { it.snapshot.serviceId.startsWith("common:") && it.snapshot.key !in ended }
-        .mapTo(linkedSetOf()) { it.snapshot.nativeKey }
-
-    /** 这条记录的事件种类(分类开关判定用);读不出时为空 */
-    fun kindOf(nativeKey: String): com.astraisland.events.EventKind? = owners.values.flatMap { it.entries.values }
-        .firstOrNull { it.snapshot.nativeKey == nativeKey }?.let { OfficialCloudServices.kind(it.snapshot) }
+    /** 这个系统记录编号现在的记录(除 [except] 以外任一来源送来的);没有为空 */
+    fun record(nativeKey: String, except: String? = null): CloudSnapshot? =
+        owners.entries.firstNotNullOfOrNull { (owner, entries) -> if (owner == except) null else entries.entries[nativeKey] }
 }

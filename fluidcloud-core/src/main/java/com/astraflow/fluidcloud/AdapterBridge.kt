@@ -110,26 +110,21 @@ object AdapterBridge {
         EventBridge.OP_READY -> { hello(); null }
         // 星河岛在系统界面主线程上报来时当场处理
         EventBridge.OP_STATE -> {
-            // 显示交接只在主线程同步执行;异步投递不能作为已经执行的答复。
-            if (accepted && Looper.myLooper() == Looper.getMainLooper()) {
-                // 星河岛主动撤销接入时报一次「什么都不接手、不在管事」,不带任何事件身份(普通的归属变化一定带这三组):
-                // 接入件先恢复原生显示,再使本次握手失效;普通的归属变化不使握手失效(现行规则「系统事件接入」)。
-                val revoked = !request.getBoolean(EventBridge.KEY_ACTIVE) &&
-                    !request.containsKey(EventBridge.KEY_HANDLED) &&
-                    !request.containsKey(EventBridge.KEY_SPENT) &&
-                    !request.containsKey(EventBridge.KEY_ALWAYS)
+            // 星河岛在系统界面主线程上报来,当场处理。星河岛不再收下插件时报的「不在管事」不带亮完的提示这一组:
+            // 先让系统胶囊全部交还系统,再使本次握手失效(现行规则「系统事件接入」)。
+            if (accepted) {
                 onState(request)
-                if (revoked) accepted = false
-                Bundle().apply { putStringArray(EventBridge.KEY_CONFIRMED, OfficialCloudSource.confirmedIdentities().toTypedArray()) }
-            } else null
+                if (!request.getBoolean(EventBridge.KEY_ACTIVE) && !request.containsKey(EventBridge.KEY_SPENT)) accepted = false
+            }
+            null
         }
         EventBridge.OP_PERFORM -> Bundle().apply {
-            putBoolean(EventBridge.KEY_DONE, accepted && OfficialCloudSource.perform(request.getString(EventBridge.KEY_IDENTITY).orEmpty(),
-                request.getString(EventBridge.KEY_ACTION)))
+            putBoolean(EventBridge.KEY_DONE, accepted && OfficialCloudSource.perform(request.getString(EventBridge.KEY_IDENTITY)!!,
+                request.getString(EventBridge.KEY_ACTION)!!))
         }
         EventBridge.OP_OPENED -> Bundle().apply {
-            putBoolean(EventBridge.KEY_DONE, accepted && OfficialCloudSource.openedPage(request.getString(EventBridge.KEY_IDENTITY).orEmpty(),
-                request.getString(EventBridge.KEY_ACTION).orEmpty()))
+            putBoolean(EventBridge.KEY_DONE, accepted && OfficialCloudSource.openedPage(request.getString(EventBridge.KEY_IDENTITY)!!,
+                request.getString(EventBridge.KEY_ACTION)!!))
         }
         else -> null
     }

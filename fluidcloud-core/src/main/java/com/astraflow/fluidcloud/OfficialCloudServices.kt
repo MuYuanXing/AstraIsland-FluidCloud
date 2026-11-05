@@ -1,15 +1,12 @@
 package com.astraflow.fluidcloud
 
 import com.astraisland.events.Alert
-import com.astraisland.events.Details
 import com.astraisland.events.EventKind
 import com.astraisland.events.Instant
-import com.astraisland.events.SwitchKind
 
 /**
- * 系统自带服务的归类与内容整理(现行规则「系统事件接入」)。服务号来自系统的流体云服务清单:
- * 同一个服务在所有机型上是同一个号。这里只读出归类、时间、按钮用途和名字,不写标题、不画卡片、不排位
- * (标题、说明怎么写由星河岛按标准事件决定)。
+ * 系统流体云服务的归类(现行规则「系统事件接入」)。服务号来自系统的流体云服务清单:同一个服务在所有机型上是同一个号。
+ * 这里只读出事件种类(只用于分类开关与排位)、时机、来源与名字;卡片内容一律照官方内容树,不在这里整理。
  */
 object OfficialCloudServices {
     const val CALL = "268451840"
@@ -49,37 +46,30 @@ object OfficialCloudServices {
     private val CALL_SERVICES = setOf(CALL, "268451940", "268451915")
     /** 设备快连:我的设备、耳机、配件。 */
     private val DEVICE_SERVICES = setOf(MY_DEVICES, "268451912", "268451913")
-    private val TIMER_SERVICES = setOf(TIMER, STOPWATCH, ALARM, GARB_ALARM, GAME_TIMER)
     /** 一加时钟的计时器与一加录音:和一加手机的 OPPO 对应服务同样排。 */
     private const val ONEPLUS_TIMER = "268451943"
     private const val ONEPLUS_SOUND_RECORDER = "268451941"
     private val RECORDER_SERVICES = setOf(SCREEN_RECORDER, SOUND_RECORDER, ONEPLUS_SOUND_RECORDER)
 
-    private const val CLOCK_PROVIDER = "com.oplus.alarmclock.provider.communicate"
-    /** 秒表计次按钮在卡片说明文件里的位置代号 */
-    private const val LAP_BUTTON = "E1"
     private const val SYSTEM_UI = "com.android.systemui"
 
-    /**
-     * 「展开卡片总表」里其它应用与系统场景的事件怎么排(现行规则「展开卡片总表」)。按服务号认,不按内容猜;
-     * 计时、系统开关、录制、通话、音乐、充电这些系统自带的仍按 [kind] 与各自的整理。
-     */
+    /** 其它应用与系统场景的事件属于哪一组(只用来定事件种类):按服务号认,换了新服务号的按服务意图认 */
     enum class Layout {
-        /** 外卖模板:进度卡片,左边菜品图,标题写骑手或商家在做什么,正文写预计送达(快递、车辆充电先按它排) */
+        /** 外卖、快递提醒、车辆充电进度 */
         TAKEOUT,
-        /** 打车:进度卡片,标题写司机在做什么,说明写车型和车牌 */
+        /** 打车 */
         RIDE,
-        /** 应用下载、游戏更新、互传发送中:进度卡片,只在文字里写了百分比时也按它画进度条 */
+        /** 应用下载、游戏更新、互传发送中 */
         TASK,
-        /** 导航与驾车红绿灯提醒:通用卡片,开车、骑行、步行一个样子,红绿灯秒数放大写在标题右边 */
+        /** 导航与驾车红绿灯提醒 */
         NAVIGATION,
-        /** 游戏自己的复活倒计时:计时卡片 */
+        /** 游戏自己的复活倒计时 */
         COUNTDOWN,
-        /** 各种提醒:通用卡片 */
+        /** 各种提醒 */
         REMINDER,
-        /** 应用自己的通知被系统做成的卡片(旧格式,服务号以 common: 开头):同应用自己发的实时活动,有进度用进度卡片,其它用通用卡片 */
+        /** 应用自己的通知被系统做成的卡片(服务号以 common: 开头) */
         APP_NOTICE,
-        /** 表里没有:按官方卡片的结构排(底部是进度条的用进度卡片,其余用通用卡片),在日志里记下服务号等用户看 */
+        /** 表里没有的服务 */
         UNLISTED,
     }
 
@@ -108,10 +98,7 @@ object OfficialCloudServices {
         "268452002", "268452012", "268452016", "268452017", "268452018", "268452022", "268452028", "268452037", "268452038",
         "268452039", "268452040", "268452042", "268452043", "268460003", "268460005", "268460006", "536875277")
 
-    /**
-     * 这个事件在「展开卡片总表」里的排法;系统自带的计时、开关、录制、通话等不走这里(见 [kind])。
-     * 表里没有的服务号,卡片说明文件写的服务意图和表里的服务一样时(同一个服务换了新服务号)照那个服务的排法。
-     */
+    /** 这个事件属于哪一组;表里没有的服务号,服务意图和表里的服务一样时(同一个服务换了新服务号)照那个服务 */
     fun layout(snapshot: CloudSnapshot): Layout {
         val id = snapshot.serviceId
         return when {
@@ -127,8 +114,8 @@ object OfficialCloudServices {
     }
 
     /**
-     * 表里各服务的卡片说明文件写的服务意图 → 排法(照手机上这些服务的 config.json 读出):新服务号的意图和其中一个一样时照它排
-     * (新服务号照老号画法)。只认完全一样的意图,带新版本号的意图(例如快递取件的 FLUID_v3)不算同一个。
+     * 表里各服务的卡片说明文件写的服务意图 → 组(照手机上这些服务的 config.json 读出)。
+     * 只认完全一样的意图,带新版本号的意图(例如快递取件的 FLUID_v3)不算同一个。
      */
     private val INTENT_LAYOUTS: Map<String, Layout> = buildMap {
         fun add(layout: Layout, vararg actions: String) = actions.forEach { put("pantanal.intent.$it", layout) }
@@ -156,35 +143,6 @@ object OfficialCloudServices {
             "weather.EXTREME_WEATHER_WARN", "contentconsult.TEXT_INTENT_IDENTIFY", "weather.WEATHER_RAIN_FORECAST",
             "event_services.EVENT_FLUENCY_CLOUD", "video.FLUID_ADDRESS_CAR", "video.FLUID_ADDRESS_RECOGNITION",
             "attendance_reminder.ATTENDANCE_CLOCK", "business.app.system.MCS_DOWNLOAD_SWITCH", "business.app.system.OSHARE_USER_CONFIRM")
-    }
-
-    /**
-     * 这个事件的卡片要不要把挤在小字里的几项拆成并排的明细、怎么拆(「改好以后的样子」页,现行规则「展开卡片总表」):
-     * 电影、景点门票按服务号或它们专有的服务意图认(换了新服务号照老号),课程只认服务号(同一个意图也发普通日程)。
-     */
-    fun detailsRecipe(snapshot: CloudSnapshot): Details? =
-        DETAILS_RECIPES[snapshot.serviceId] ?: DETAILS_INTENTS[snapshot.intentAction]
-
-    private val DETAILS_RECIPES = mapOf(
-        "536878517" to Details.MOVIE, "536879199" to Details.MOVIE,
-        "536878530" to Details.SCENIC, "536879212" to Details.SCENIC,
-        "268452047" to Details.COURSE)
-    private val DETAILS_INTENTS = mapOf(
-        "pantanal.intent.internal_xiaobu_memory.MOVIE_PERFORMANCE_MEMORY" to Details.MOVIE,
-        "pantanal.intent.internal_xiaobu_memory.MOVIE_PERFORMANCE_MEMORY_V2" to Details.MOVIE,
-        "pantanal.intent.internal_xiaobu_memory.SCENIC_SPOT_TICKET_MEMORY" to Details.SCENIC,
-        "pantanal.intent.internal_xiaobu_memory.SCENIC_SPOT_TICKET_MEMORY_V2" to Details.SCENIC)
-
-    /**
-     * 系统卡片上只有图标、没有字的按钮叫什么:高德骑行步行导航的全览按钮(开着全览时是退出全览)。
-     * 没有名字的按钮不显示(现行规则「系统事件接入」),这里只补系统按钮本来的意思。
-     */
-    fun iconButtonLabel(action: CloudAction?, data: Map<String, String>): String? = when (action?.method) {
-        "gaodeBwnaviOverview", "baiduBwnaviOverview" -> if (data["showOverViewClose"]?.trim() == "true") "退出全览" else "全览"
-        // 系统录屏卡片的两个开关只画图标,朗读文字(「录制系统声音按钮 已选中」)只给读屏;星河岛上写它们是什么
-        "audioSysClick" -> "系统声音"
-        "audioMicClick" -> "麦克风"
-        else -> null
     }
 
     /**
@@ -237,12 +195,6 @@ object OfficialCloudServices {
     /** 系统界面替播放器发的合成音乐通知(旧格式卡片,通知编号就是音乐服务号)。 */
     private fun systemMediaNotification(snapshot: CloudSnapshot): Boolean =
         snapshot.serviceId.startsWith("common:") && snapshot.packageName == SYSTEM_UI && snapshot.notificationIds.any { it.toString() in MEDIA_SERVICES }
-
-    /**
-     * 系统的充电胶囊与电池提示(电量不足、省电建议、省电已开启、电池已充满):一律藏起、不上岛,岛没显示时也藏;
-     * 岛自己的充电按岛原来的规矩,不做低电量提醒(现行规则「系统事件接入」)。
-     */
-    fun alwaysHidden(snapshot: CloudSnapshot): Boolean = snapshot.serviceId == CHARGE || snapshot.serviceId == BATTERY
 
     /**
      * 只亮一下的提示(系统的即时提醒,例如勿扰、响铃模式、手势提示):短时强提醒是短时(3 秒),其余是一般(5 秒)
@@ -300,9 +252,6 @@ object OfficialCloudServices {
         return runCatching { org.json.JSONObject(options).optString("dataSourcePkgName") }.getOrNull()?.takeIf { it.isNotBlank() && it != SYSTEM_UI }
     }
 
-    /** 卡片说明里写的来源名:系统登记的服务名,系统界面托管的服务不写「系统界面」;都没有时写发卡片的应用名。 */
-    fun sourceName(snapshot: CloudSnapshot, appLabel: () -> String): String = serviceName(snapshot).ifBlank { appLabel() }
-
     /**
      * 系统服务的名字(标准事件的 serviceName):系统登记的服务名;系统界面托管的服务读数据里的名字,再没有时照开关名;
      * 都没有时为空(由星河岛写发卡片的应用名)。
@@ -319,180 +268,14 @@ object OfficialCloudServices {
     /** 系统登记的服务名;没登记、还是没翻译的代号(以「{」开头)时为空 */
     private fun validName(snapshot: CloudSnapshot): String? = snapshot.serviceName.takeIf { it.isNotBlank() && !it.startsWith("{") }
 
-    /** 系统开关的名字(手电筒照数据里写的名字);认不出时为空 */
-    fun switchName(snapshot: CloudSnapshot): String? = when (snapshot.serviceId) {
-        FLASHLIGHT -> snapshot.data["name"]?.takeIf { it.isNotBlank() } ?: SYSTEM_NAMES.getValue(FLASHLIGHT)
-        in SWITCH_SERVICES -> SYSTEM_NAMES[snapshot.serviceId] ?: validName(snapshot)
-        else -> null
-    }
-
-    /** 系统开关的状态那句(手电筒的数据里写着);没有时为空 */
-    fun switchState(snapshot: CloudSnapshot): String? =
-        if (snapshot.serviceId == FLASHLIGHT) snapshot.data["lightDes"]?.takeIf { it.isNotBlank() } else null
-
-    /** 哪个系统开关;不是系统开关时为空 */
-    fun switchKind(snapshot: CloudSnapshot): SwitchKind? = SWITCH_KINDS[snapshot.serviceId]
-
-    private val SWITCH_KINDS = mapOf(FLASHLIGHT to SwitchKind.FLASHLIGHT, DND to SwitchKind.DO_NOT_DISTURB, THREE_KEY to SwitchKind.THREE_KEY,
-        EYE_PROTECT to SwitchKind.EYE_PROTECT, HOTSPOT to SwitchKind.HOTSPOT, GESTURE to SwitchKind.GESTURE)
-
     private val SYSTEM_NAMES = mapOf(
         FLASHLIGHT to "手电筒", DND to "勿扰", THREE_KEY to "三段式按键", MEDIA to "音乐",
         HOTSPOT to "个人热点", EYE_PROTECT to "护眼",
     )
 
-    /**
-     * 按服务整理卡片内容:时间、按钮用途和系统卡片没登记的按钮动作。通用读法已经读出的内容作为起点,这里只补系统服务特有的部分;
-     * 其它服务原样返回。[nowElapsedMs] 用来把只有文字的时间换成会走的计时。标题、说明怎么写由星河岛按标准事件决定。
-     */
-    fun refine(snapshot: CloudSnapshot, content: CloudContent, nowElapsedMs: Long): CloudContent = when (snapshot.serviceId) {
-        CALL -> call(snapshot, content, nowElapsedMs)
-        STOPWATCH -> stopwatch(snapshot, content, nowElapsedMs)
-        TIMER -> timer(snapshot, content, nowElapsedMs)
-        ALARM -> alarm(snapshot, content, nowElapsedMs)
-        GARB_ALARM -> garbAlarm(content)
-        SCREEN_RECORDER -> if (completionPage(snapshot)) content else screenRecorder(snapshot, content, nowElapsedMs)
-        SOUND_RECORDER -> if (completionPage(snapshot)) content else soundRecorder(snapshot, content, nowElapsedMs)
-        else -> content
-    }
-
-    /**
-     * 通话:系统通话卡片没有自己走的计时。接通后来电界面每秒把通话时长写成文字(胶囊右边那一段,「00:05」「1:02:03」),
-     * 岛按收到时的时长往后走;拨号、来电时那一段写的是状态字(例如「正在呼叫」)或号码,不是时长,不计时。
-     */
-    private fun call(snapshot: CloudSnapshot, content: CloudContent, now: Long): CloudContent {
-        val elapsed = callDuration(snapshot.data["callInfo"]) ?: return content
-        val received = snapshot.receivedAtElapsedMs.takeIf { it > 0 } ?: now
-        return content.copy(timer = CloudTimer(received - elapsed, countdown = false, elapsedClock = true))
-    }
-
-    /** 来电界面写的通话时长(「分:秒」「时:分:秒」)换成毫秒;状态字、号码这类不是时长的为 null */
-    fun callDuration(text: String?): Long? {
-        val m = CALL_DURATION.matchEntire(text?.trim() ?: return null) ?: return null
-        val parts = listOfNotNull(m.groupValues[1], m.groupValues[2], m.groupValues[3].takeIf { it.isNotEmpty() }).map { it.toLong() }
-        if (parts.drop(1).any { it >= 60 }) return null
-        val seconds = if (parts.size == 3) parts[0] * 3600 + parts[1] * 60 + parts[2] else parts[0] * 60 + parts[1]
-        return seconds * 1000L
-    }
-
-    private val CALL_DURATION = Regex("""^(\d{1,3}):(\d{2})(?::(\d{2}))?$""")
-
-    /**
-     * 秒表:系统每秒送一次「分:秒」文字,没有起点;岛按收到时的时长往后走。暂停时停住。
-     * 按钮:走着时是暂停与计次,停着时是继续与复位(系统卡片走着时的两个按钮没有登记动作,按时钟应用处理同样两个请求的办法补上)。
-     */
-    private fun stopwatch(snapshot: CloudSnapshot, content: CloudContent, now: Long): CloudContent {
-        val running = stopwatchRunning(snapshot, content)
-        val elapsed = duration(snapshot.data["stopwatch_time"]) ?: return content
-        val received = snapshot.receivedAtElapsedMs.takeIf { it > 0 } ?: now
-        val timer = if (running) CloudTimer(received - elapsed, countdown = false, elapsedClock = true)
-            else CloudTimer(received - elapsed, countdown = false, elapsedClock = true, running = false, frozenMs = elapsed)
-        val control = CloudAction(CloudTemplate.TYPE_MESSAGE, CLOCK_PROVIDER, "controlOperate")
-        val function = CloudAction(CloudTemplate.TYPE_MESSAGE, CLOCK_PROVIDER, "functionOperate")
-        // 计次照官方是只画图标的按钮:用官方的计次图标画成灰底圆钮(「改好以后的样子」页)
-        val lapIcon = content.buttonIcons[LAP_BUTTON]
-        val buttons = if (running) listOf(
-            CloudButton("stopwatch:control", "暂停", action = control, role = CloudRole.PAUSE),
-            CloudButton("stopwatch:function", "计次", action = function, icon = lapIcon, round = lapIcon != null),
-        ) else listOf(
-            CloudButton("stopwatch:control", "继续", action = control, role = CloudRole.RESUME),
-            CloudButton("stopwatch:function", "复位", action = function, role = CloudRole.STOP),
-        )
-        return content.copy(timer = timer, buttons = buttons)
-    }
-
-    /** 秒表在走(假为暂停):数据写着时照它,没写时看卡片里的计时 */
-    fun stopwatchRunning(snapshot: CloudSnapshot, content: CloudContent): Boolean =
-        snapshot.data["stopwatch_running"]?.let { it == "true" } ?: (content.timer?.running == true)
-
-    /** 计时器:系统送的是剩余时间文字;按收到时的剩余时间倒数,暂停时停住。按钮按模板,用途按当前操作认。 */
-    private fun timer(snapshot: CloudSnapshot, content: CloudContent, now: Long): CloudContent {
-        val method = snapshot.data["timer_operate_method"].orEmpty()
-        val ringing = snapshot.data["timer_ring"] == "true"
-        val remaining = duration(snapshot.data["timer_time"])
-        val received = snapshot.receivedAtElapsedMs.takeIf { it > 0 } ?: now
-        val timer = when {
-            // 时间到了:停在 00:00,放大写(「改好以后的样子」页)
-            ringing -> CloudTimer(received, countdown = true, elapsedClock = true, running = false, frozenMs = 0L)
-            remaining == null -> null
-            method == "pauseTimer" -> CloudTimer(received + remaining, countdown = true, elapsedClock = true)
-            else -> CloudTimer(received + remaining, countdown = true, elapsedClock = true, running = false, frozenMs = remaining)
-        }
-        val buttons = content.buttons.map { button ->
-            when (button.action?.method) {
-                "operateTimer" -> button.copy(role = if (method == "pauseTimer") CloudRole.PAUSE else CloudRole.RESUME)
-                "cancelTimer" -> button.copy(role = CloudRole.STOP)
-                else -> button
-            }
-        }
-        return content.copy(timer = timer ?: content.timer, buttons = buttons)
-    }
-
-    /** 闹钟:响铃时是到点提醒(稍后提醒、关闭);稍后提醒期间按剩余时间倒数。 */
-    private fun alarm(snapshot: CloudSnapshot, content: CloudContent, now: Long): CloudContent {
-        val ringing = snapshot.data["alarm_alarm_ring"] == "true"
-        val received = snapshot.receivedAtElapsedMs.takeIf { it > 0 } ?: now
-        val timer = if (ringing) null else duration(snapshot.data["alarm_time"])?.let { CloudTimer(received + it, countdown = true, elapsedClock = true) }
-        val buttons = content.buttons.map { if (it.action?.method == "cancelAlarm") it.copy(role = CloudRole.STOP) else it }
-        return content.copy(timer = timer ?: content.timer.takeIf { !ringing }, buttons = buttons)
-    }
-
-    /** 秒抢闹钟:只有关闭(closeGarbAlarm)是停止,别的按钮各按各的动作,不并成一颗(「改好以后的样子」页)。 */
-    private fun garbAlarm(content: CloudContent): CloudContent =
-        content.copy(buttons = content.buttons.map { if (it.action?.method == "closeGarbAlarm") it.copy(role = CloudRole.STOP) else it })
-
     fun ringing(snapshot: CloudSnapshot): Boolean = when (snapshot.serviceId) {
         ALARM -> snapshot.data["alarm_alarm_ring"] == "true"
         TIMER -> snapshot.data["timer_ring"] == "true"
         else -> false
-    }
-
-    /**
-     * 录屏:时间按卡片数据里的计时(起点按开机时钟,停住时是暂停);暂停或继续、完成按当前状态认用途。
-     * 系统声音、麦克风两个开关照样留着:录制中的系统卡片不单独上岛,这两个开关补进星河岛自己的录屏卡片(现行规则「系统事件接入」归类)。
-     */
-    private fun screenRecorder(snapshot: CloudSnapshot, content: CloudContent, now: Long): CloudContent {
-        val received = snapshot.receivedAtElapsedMs.takeIf { it > 0 } ?: now
-        val timer = snapshot.data["chronometerValue"]?.let { OfficialCloudDecoder.parseTimer(mapOf("chronometer" to it), received) } ?: content.timer
-        val paused = timer?.running == false
-        val buttons = content.buttons.map { button ->
-            when (button.action?.method) {
-                "pauseOrResumeClick" -> button.copy(label = if (paused) "继续" else "暂停", role = if (paused) CloudRole.RESUME else CloudRole.PAUSE)
-                "finishClick" -> button.copy(role = CloudRole.STOP)
-                else -> button
-            }
-        }
-        return content.copy(timer = timer, buttons = buttons)
-    }
-
-    /** 录音:时间是分开的文字(时、分、秒),录着时往后走;按钮是暂停或继续、保存(红色停止)与标记。 */
-    private fun soundRecorder(snapshot: CloudSnapshot, content: CloudContent, now: Long): CloudContent {
-        val running = snapshot.data["recordInProgress"]?.let { it == "true" }
-        val parts = listOf("dayText", "hourText", "minuteText", "secondText").map { snapshot.data[it]?.filter(Char::isDigit)?.toLongOrNull() }
-        val elapsed = if (parts.all { it == null }) null else parts.map { it ?: 0L }.let { (d, h, m, s) -> ((d * 24 + h) * 60 + m) * 60_000L + s * 1000L }
-        val received = snapshot.receivedAtElapsedMs.takeIf { it > 0 } ?: now
-        val timer = elapsed?.let { if (running == false) CloudTimer(received - it, false, true, running = false, frozenMs = it) else CloudTimer(received - it, false, true) }
-        val buttons = content.buttons.map { button ->
-            when (button.action?.method) {
-                "pauseOrResume", "startOrPause" -> button.copy(role = if (running == false) CloudRole.RESUME else CloudRole.PAUSE)
-                "saveAudio" -> button.copy(role = CloudRole.STOP)
-                else -> button
-            }
-        }
-        return content.copy(timer = timer ?: content.timer, buttons = buttons)
-    }
-
-    /**
-     * 「分:秒」「时:分:秒」「天:时:分:秒」文字换成毫秒(系统按本地数字写,先换成阿拉伯数字);读不出时返回 null。
-     */
-    fun duration(text: String?): Long? {
-        if (text.isNullOrBlank()) return null
-        val digits = text.map { c -> if (Character.isDigit(c)) Character.forDigit(Character.getNumericValue(c), 10) else c }.joinToString("")
-        val parts = digits.split(Regex("[^0-9]+")).filter { it.isNotEmpty() }.map { it.toLongOrNull() ?: return null }
-        if (parts.size !in 2..4) return null
-        var seconds = 0L
-        val units = when (parts.size) { 2 -> listOf(60L, 1L); 3 -> listOf(3600L, 60L, 1L); else -> listOf(86_400L, 3600L, 60L, 1L) }
-        parts.forEachIndexed { i, v -> seconds += v * units[i] }
-        return seconds * 1000L
     }
 }

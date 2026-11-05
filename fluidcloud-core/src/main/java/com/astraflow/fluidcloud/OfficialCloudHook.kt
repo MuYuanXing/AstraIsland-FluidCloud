@@ -7,7 +7,6 @@ import io.github.libxposed.api.XposedInterface
 import org.luckypray.dexkit.DexKitBridge
 import java.io.File
 import java.lang.reflect.Method
-import java.security.MessageDigest
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ExecutorService
@@ -26,7 +25,6 @@ object OfficialCloudHook {
      * 实际反编译核对过的那一版插件。只在这一版上读通知变成的胶囊里系统已经画好的控件(取控件用的是这一版里的短名字);
      * 其它版本不读这些控件;数据读取与显示交接能力分别核对。
      */
-    const val VERIFIED_PLUGIN_SHA256 = "ad74975487c99d7a9ed29ebf8f5f644283a3ad096f89b75e2bca3003cca1be7a"
     val anchors = linkedMapOf(
         CloudChange.REPLACE to "EntryDataListener,onDataChanged originData:",
         CloudChange.POST to "EntryDataListener,onDataPosted originData:",
@@ -49,11 +47,11 @@ object OfficialCloudHook {
     }
 
     /**
-     * 在一份插件文件上找到的:三个监听方法(找不到为 null)、是不是核对过的那一版,以及让位要用的两处——
+     * 在一份插件文件上找到的:三个监听方法(找不到为 null),以及让位要用的两处——
      * 接收卡片内容的类([interceptors],实现 OPPO 接口 UIDataInterceptor)和接收服务名单的类([observers],实现 DecisionObserver)。
      */
     class PluginScan(
-        val listeners: Map<CloudChange, MethodRef?>, val verified: Boolean,
+        val listeners: Map<CloudChange, MethodRef?>,
         val interceptors: List<String> = emptyList(), val observers: List<String> = emptyList(),
         val renderers: List<MethodRef> = emptyList(), val refreshDisplay: MethodRef? = null,
         val api: OfficialCloudPlatform.Api = OfficialCloudPlatform.Api.LEGACY,
@@ -148,7 +146,6 @@ object OfficialCloudHook {
                     superseded = replaced || resolvedOwners.isNotEmpty())
                 return
             }
-            val verified = scan.verified
             val generation = Generation(loader, listenerClasses, identity)
             try {
                 resolved.forEach { (change, method) ->
@@ -164,7 +161,7 @@ object OfficialCloudHook {
                                 val ownerId = known ?: synchronized(owners) { owners.getOrPut(owner) { "listener-${ownerSequence.incrementAndGet()}" } }
                                 generation.ownerIds += ownerId
                                 diagnoseArrival(ownerId, owner, change, data)
-                                OfficialCloudSource.receive(ownerId, nextRevision(), change, data, verified)
+                                OfficialCloudSource.receive(ownerId, nextRevision(), change, data)
                                 dropDeadOwners()
                                 retireOlderThan(generation)
                             }
@@ -184,7 +181,7 @@ object OfficialCloudHook {
             }
             OfficialCloudSource.reportVisibility()
             synchronized(generations) { generations += generation }
-            com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners installed; api=${scan.api} notification capsules=${listenerClasses.isNotEmpty()} reviewed plugin=$verified on $apk")
+            com.astraflow.fluidcloud.hook.Log.i(TAG, "official event listeners installed; api=${scan.api} notification capsules=${listenerClasses.isNotEmpty()} on $apk")
             if (resolved.isEmpty() && !allShared) com.astraflow.fluidcloud.hook.Log.w(TAG, "notification capsules unreadable on $apk: " +
                 "listener anchors unresolved: missing=$unresolved owners=${resolvedOwners.map { it.name }}")
             else if (unresolved.isNotEmpty()) com.astraflow.fluidcloud.hook.Log.w(TAG,
@@ -265,9 +262,8 @@ object OfficialCloudHook {
         fun implementers(api: String) = runCatching { bridge.findClass { matcher { addInterface(api) } }.map { it.name } }.getOrDefault(emptyList())
         val interceptors = implementers(OfficialCloudYield.INTERCEPTOR)
         val observers = implementers(OfficialCloudYield.OBSERVER)
-        val verified = hash(path) == VERIFIED_PLUGIN_SHA256
         OfficialCloudPlatform.select(c17, modern = {
-            OfficialCloudPlatform.scanC17(bridge, verified, interceptors, observers)
+            OfficialCloudPlatform.scanC17(bridge, interceptors, observers)
         }, legacy = {
             val listeners = anchors.mapValues { (_, anchor) ->
                 bridge.findMethod { matcher { usingStrings(anchor); paramCount = 1; paramTypes = listOf("java.util.List") } }
@@ -282,7 +278,7 @@ object OfficialCloudHook {
             val refresh = bridge.findMethod {
                 matcher { usingStrings("notifyEntryDataChanged skip due to released"); paramCount = 2; returnType = "void" }
             }.singleOrNull()?.let { MethodRef(it.className, it.name, it.paramTypeNames) }
-            PluginScan(listeners, verified = verified, interceptors = interceptors, observers = observers,
+            PluginScan(listeners, interceptors = interceptors, observers = observers,
                 renderers = renderers, refreshDisplay = refresh)
         })
     }
@@ -328,12 +324,4 @@ object OfficialCloudHook {
         if (dead.isNotEmpty()) OfficialCloudSource.dropOwners(dead)
     }
 
-    private fun hash(path: String): String? = runCatching {
-        val digest = MessageDigest.getInstance("SHA-256")
-        File(path).inputStream().use { input ->
-            val bytes = ByteArray(65536)
-            while (true) { val read = input.read(bytes); if (read < 0) break; digest.update(bytes, 0, read) }
-        }
-        digest.digest().joinToString("") { "%02x".format(it) }
-    }.getOrNull()
 }

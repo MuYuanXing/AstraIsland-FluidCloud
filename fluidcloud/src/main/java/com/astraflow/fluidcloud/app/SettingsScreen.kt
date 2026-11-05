@@ -287,8 +287,6 @@ internal data class Health(
     fun capsuleText() = when (capsule) {
         CAPSULE_AVAILABLE -> "可用"
         CAPSULE_UNAVAILABLE -> "不可用"
-        "pending" -> "等待显示交接"
-        "partial" -> "部分未接管"
         else -> if (running == null && !checked) "检查中" else "尚未确定"
     }
 
@@ -303,7 +301,6 @@ internal data class Health(
         island == REFUSED_SIGNATURE -> StatusNote(StatusRow.ISLAND, "需在星流中允许本机测试，或从插件商店重新安装本插件")
         island?.startsWith(AdapterBridge.STATUS_REFUSED) == true -> StatusNote(StatusRow.ISLAND, "需从星流的插件商店重新安装本插件")
         capsule == CAPSULE_UNAVAILABLE -> StatusNote(StatusRow.CAPSULE, CAPSULE_UNAVAILABLE_NOTE)
-        capsule == "partial" -> StatusNote(StatusRow.CAPSULE, "部分事件无法完成显示交接，已交由系统显示")
         else -> null
     }
 

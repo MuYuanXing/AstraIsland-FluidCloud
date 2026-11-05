@@ -1,6 +1,8 @@
 package com.astraflow.fluidcloud
 
 import android.content.Context
+import com.astraisland.events.EventImage
+import com.astraisland.events.PageNode
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -11,12 +13,11 @@ import java.util.concurrent.Executors
 
 /**
  * 系统卡片的模板(现行规则「系统事件接入」)。系统界面把每个服务的卡片模板解压在自己的存储里
- * (files/upk/<服务号的 SHA-256>/<版本号>/),模板里写明每个按钮按下时交给谁、带什么参数,以及按钮什么时候显示。
- * 岛在系统界面进程里读同一份模板,按这张卡片的数据代入,按钮就能发出与系统卡片完全相同的请求。
- * 只读文件,不改任何东西;读不到模板或代入不了时,这个按钮就不显示。
+ * (files/upk/<服务号的 SHA-256>/<版本号>/),模板写明卡片的内容树、每个元素按下时交给谁、带什么参数,以及元素什么时候显示。
+ * 插件在系统界面进程里读同一份模板,按这张卡片的数据代入得到官方内容树([page]),点按时发出与系统卡片完全相同的请求([action])。
+ * 只读文件,不改任何东西。
  */
 class CloudTemplate(
-    private val nodes: List<Node>,
     /** 动作名 → 登记的做法;写成列表的按顺序试,前一种打不开再用下一种(例如先开应用里的页面,没装应用时去应用商店) */
     private val actions: Map<String, List<JSONObject>>,
     private val defaults: Map<String, String>,
@@ -29,7 +30,7 @@ class CloudTemplate(
 ) {
     class Node(val type: String, val level: String, val attrs: Map<String, String>, val events: Map<String, String>, val shown: String?)
 
-    /** 说明文件里的层级,系统没交排好的卡片时按它排出胶囊与展开两部分。 */
+    /** 说明文件里的层级 */
     class Tree(val node: Node, val children: List<Tree>)
 
     /**
@@ -44,70 +45,64 @@ class CloudTemplate(
         return strings[key.substringAfter("strings.")] ?: strings[key] ?: ""
     }
 
-    /**
-     * 系统没把排好的卡片交给岛时,照说明文件和数据排出胶囊与展开两部分(只取第一张带这两部分的卡片模板):
-     * 按显示条件去掉此刻不显示的节点,文字、图片地址、进度与计时按数据代入;没有点击动作的按钮不当按钮
-     * (现行规则「系统事件接入」)。
-     */
-    fun render(data: Map<String, String>): CloudNode? {
+    /** 动作 [name] 在这张卡片此刻的数据下是不是挂在写明锁屏显示(lockscreenCapsuleShow)的元素上:锁屏时只执行这些(与系统锁屏一致) */
+    fun lockScreenAction(name: String, data: Map<String, String>): Boolean {
         val scope = scope(data)
-        val card = findCard(tree) ?: return null
-        val parts = card.children.filter { it.node.type in PARTS }.mapNotNull { renderNode(it, scope, 0) }
-        return parts.takeIf { it.isNotEmpty() }?.let { CloudNode(CARD, children = it) }
+        fun visit(item: Tree): Boolean = (item.node.events.containsValue(name) &&
+            item.node.attrs["lockscreenCapsuleShow"]?.let { OfficialCloudExpr.truthy(OfficialCloudExpr.value(it, scope, strings)) } == true) ||
+            item.children.any(::visit)
+        return tree.any(::visit)
     }
 
-    private fun findCard(list: List<Tree>): Tree? {
+    /**
+     * 这张卡片此刻的官方内容树:流体云那一张 card-template 整棵,照模板的类型、位置代号与先后。显示条件(shown、show)不成立的元素去掉;
+     * 属性全部代入数据,图片以外的换成当前语言;用到的数据读不到的属性不写(与模板引擎一致)。图片属性按 [image] 读好放进
+     * [PageNode.images];交互只留 actions 里登记了的动作。
+     */
+    fun page(data: Map<String, String>, image: (type: String, attrs: Map<String, String>, value: String) -> EventImage?): PageNode? {
+        val scope = scope(data)
+        return firstCard(tree)?.let { pageNode(it, scope, image) }
+    }
+
+    /** 流体云那一张:entry 写着 notification 的 card-template(同一页里还可能有给桌面的 desktop 卡片) */
+    private fun firstCard(list: List<Tree>): Tree? {
         for (item in list) {
-            if (item.node.type == CARD && item.children.any { it.node.type in PARTS }) return item
-            findCard(item.children)?.let { return it }
+            if (item.node.type == CARD && "notification" in item.node.attrs["entry"].orEmpty().split(",").map(String::trim)) return item
+            firstCard(item.children)?.let { return it }
         }
         return null
     }
 
-    private fun renderNode(item: Tree, scope: Map<String, String>, depth: Int): CloudNode? {
+    private fun pageNode(item: Tree, scope: Map<String, String>, image: (String, Map<String, String>, String) -> EventImage?): PageNode? {
         val node = item.node
-        if (depth > 24) return null
         if (node.shown != null && !OfficialCloudExpr.truthy(OfficialCloudExpr.value(node.shown, scope, strings))) return null
-        // 写在属性里的显示条件(show)与节点上的(shown)一样处理(现行规则「系统事件接入」)
         node.attrs["show"]?.let { if (!OfficialCloudExpr.truthy(OfficialCloudExpr.value(it, scope, strings))) return null }
-        // 没登记点击的按钮不画;只画图标的圆形按钮留着,读它的图标(秒表的计次由星河岛补动作,图标用官方的)
-        if (node.type == "button" && node.events["click"] == null && node.attrs["type"] != "circle") return null
-        val props = LinkedHashMap<String, String>()
-        for ((key, raw) in node.attrs) {
-            val name = if (key == "value") "text" else key
-            if (name !in RENDER_ATTRS) continue
+        val attrs = LinkedHashMap<String, String>()
+        for ((name, raw) in node.attrs) {
             val value = OfficialCloudExpr.text(raw, scope, strings) ?: continue
-            props[name] = if (name == "src") value else translate(value)
+            if (name in PAGE_IMAGES) { attrs[name] = value; continue }
+            // 写成资源代号的($r('color.xxx') 这类)按说明文件自带的资源表换成实际的值,深色优先;表里没有的不写
+            val text = translate(value)
+            val ref = RESOURCE.matchEntire(unwrap(text))?.groupValues?.get(1)
+            attrs[name] = if (ref == null) text else resources[ref.substringBefore('.')]?.get(ref.substringAfter('.')) ?: continue
         }
-        return CloudNode(node.type, node.level, props, item.children.mapNotNull { renderNode(it, scope, depth + 1) })
-    }
-
-    /** 画面上某个按钮(按层级编号找)在当前数据下对应的模板节点:同编号有几个时按「显示条件」挑出正在显示的那一个。 */
-    fun button(level: String, data: Map<String, String>): Node? = node("button", level, data)
-
-    /** 同 [button],找别的种类的节点(例如可以点的进度环 widget) */
-    fun node(type: String, level: String, data: Map<String, String>): Node? {
-        val scope = scope(data)
-        val candidates = nodes.filter { it.level == level && it.type == type }
-        if (candidates.size <= 1) return candidates.singleOrNull()
-        val shown = candidates.filter { node -> node.shown == null || OfficialCloudExpr.truthy(OfficialCloudExpr.value(node.shown, scope, strings)) }
-        return shown.singleOrNull()
-    }
-
-    /** 和点击动作 [event] 一样的按钮上的字(例如互传的进度环和「取消」按钮点了都是取消);没有这样的按钮时为空 */
-    fun buttonLabel(event: String, data: Map<String, String>): String? =
-        nodes.filter { it.type == "button" && it.events["click"] == event }.firstNotNullOfOrNull { label(it, data) }
-
-    /** 按钮上的字:有文字用文字,纯图标按钮用无障碍描述(模板里的 voiceLabel)。 */
-    fun label(node: Node, data: Map<String, String>): String? {
-        val scope = scope(data)
-        // 互传大图页的接收按钮误将朗读文字绑定到 reject；按接收请求读取系统提供的 accept 文字。
-        val voiceLabel = if (node.attrs["voiceLabel"] == "{{reject}}" &&
-            action(node.events["click"], data)?.let { it.uri == "com.oplus.oshare.cardwidget" && it.params["event"] == "accept" } == true)
-            "{{accept}}" else node.attrs["voiceLabel"]
-        return listOfNotNull(node.attrs["value"], voiceLabel).firstNotNullOfOrNull { raw ->
-            OfficialCloudExpr.text(raw, scope, strings)?.let(::translate)?.trim()?.takeIf { it.isNotEmpty() }
+        val images = LinkedHashMap<String, EventImage>()
+        for (name in PAGE_IMAGES) {
+            val value = attrs[name]?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+            image(node.type, attrs, value)?.let { images[name] = it }
         }
+        // 进度条的节点图标(nodeIcons)写成图片地址的数组(官方 p2 按 JSON 数组逐项读):第 i 项放在 nodeIcons[i]
+        attrs["nodeIcons"]?.trim()?.takeIf { it.startsWith("[") }?.let { raw ->
+            val list = JSONArray(raw)
+            for (i in 0 until list.length()) {
+                val value = translate(list.getString(i)).let { item ->
+                    RESOURCE.matchEntire(unwrap(item))?.groupValues?.get(1)?.let { ref -> "\$r('$ref')" } ?: item
+                }
+                image(node.type, attrs, value)?.let { images["nodeIcons[$i]"] = it }
+            }
+        }
+        return PageNode(node.type, node.level, attrs, item.children.mapNotNull { pageNode(it, scope, image) }, images,
+            node.events.filterValues { it in actions })
     }
 
     /**
@@ -168,34 +163,8 @@ class CloudTemplate(
             else cached.copy(symbol = symbol, playing = playing, loopStartFrame = loopStartFrame, loop = loop)
     }
 
-    /**
-     * 说明文件写的颜色(已代入数据):写成 $r('color.xxx') 的按说明文件自带的资源表找(深色优先),数据里写成
-     * 「{{$r('color.xxx')}}」的一样找;其余照写法读(见 [OfficialCloudColor]);读不出时为空。
-     */
-    fun color(raw: String?): Int? {
-        val value = raw?.let(::unwrap)?.takeIf { it.isNotEmpty() } ?: return null
-        val resource = RESOURCE.matchEntire(value)?.groupValues?.get(1) ?: return OfficialCloudColor.parse(value)
-        return OfficialCloudColor.parse(resources[resource.substringBefore('.')]?.get(resource.substringAfter('.')))
-    }
-
-    /** 说明文件写的渐变色(已代入数据):写成 $r('color.xxx') 的按自带的资源表找;不是渐变时为空(见 [OfficialCloudColor.gradient])。 */
-    fun gradient(raw: String?): List<Pair<Float, Int>> {
-        val value = raw?.let(::unwrap)?.takeIf { it.isNotEmpty() } ?: return emptyList()
-        val resource = RESOURCE.matchEntire(value)?.groupValues?.get(1) ?: return OfficialCloudColor.gradient(value)
-        return OfficialCloudColor.gradient(resources[resource.substringBefore('.')]?.get(resource.substringAfter('.')))
-    }
-
     /** 数据里写成「{{$r('color.xxx')}}」的颜色去掉外面的花括号(代入数据后没有再算一遍) */
     private fun unwrap(raw: String): String = raw.trim().let { if (it.startsWith("{{") && it.endsWith("}}")) it.removeSurrounding("{{", "}}").trim() else it }
-
-    /** 卡片的服务标志:说明文件里卡片下面直接放的 A1 图片(胶囊的图标位什么都读不到时用它)。 */
-    fun logo(data: Map<String, String>): CloudImage? = picture(logoNode()?.attrs?.get("src"), data)
-
-    /** 服务标志写的图片地址(已代入数据);数据给的是应用共享位置里的图时由调用方按共享图读。没写时为空。 */
-    fun logoSource(data: Map<String, String>): String? =
-        logoNode()?.attrs?.get("src")?.let { OfficialCloudExpr.text(it, scope(data), strings) }?.trim()?.takeIf { it.isNotEmpty() }
-
-    private fun logoNode() = findCard(tree)?.children?.firstOrNull { it.node.type == "image" && it.node.level.startsWith("A1") }?.node
 
     /** 模板里的图片(写成 $r('images.xxx') 或 assets 下的路径)在本机的文件;读不到时返回 null。同一个写法只找一次文件。 */
     fun image(src: String?, data: Map<String, String>): File? {
@@ -229,34 +198,26 @@ class CloudTemplate(
         private val RESOURCE = Regex("""\${'$'}r\('([^']+)'\)""")
         /** 还没翻译的代号:$t('strings.xxx') 或 $t("strings.xxx") */
         private val KEY = Regex("""\${'$'}t\(\s*(['"])(.+?)\1\s*\)""")
-        /** 卡片的胶囊与展开两部分 */
-        private val PARTS = setOf("compact", "expanded", "compatible-capsule")
-        /** 排卡片时代入的属性:文字(value)、图片、进度(分几段、第几段)、计时、进度两端的字、朗读文字、颜色 */
-        private val RENDER_ATTRS = setOf("text", "src", "percent", "step", "currentStep", "chronometer", "count-down-time", "countDownTime", "node-labels",
-            "nodeLabels", "voiceLabel", "min", "max", "alt", "autoplay", "shapeStyle", "color", "alarmTime", "category", "fontSize", "gradientColors",
-            "type", "icon", "iconOn", "iconOff", "bgColor", "bgImage", "checked", "currentNodeColor", "textColor", "scaleType", "width",
-            "progressType", "progressIcon", "showProgress", "loopStartFrame", "loop", "manuallyPlay")
-
-        /** 模板读不到时,数据里还没翻译的代号一律当空,不把代号显示出来。 */
-        fun stripKeys(data: Map<String, String>): Map<String, String> = data.mapValues { (_, value) -> if (KEY.matches(value.trim())) "" else value }
-
+        /** 写的是图片的属性(模板里的图片地址、资源代号或应用共享位置的地址) */
+        val PAGE_IMAGES = setOf("src", "alt", "aodStaticImage", "icon", "iconOn", "iconOff", "iconDisable", "transitionOn", "transitionOff",
+            "lottieIcon", "bgImage", "background")
         /** 从模板文件内容建模板;[dir] 是模板所在目录(找图片用),[strings] 是当前语言的文字表。 */
         fun parse(json: String, strings: Map<String, String> = emptyMap(), dir: File? = null,
                   resources: Map<String, Map<String, String>> = emptyMap()): CloudTemplate? = runCatching {
             val root = JSONObject(json)
-            val nodes = ArrayList<Node>()
+            var count = 0
             var cardClick: String? = null
             fun build(value: Any?, depth: Int): List<Tree> {
-                if (depth > 40 || nodes.size > 2048) return emptyList()
+                if (depth > 40 || count > 2048) return emptyList()
                 return when (value) {
                     is JSONArray -> (0 until value.length()).flatMap { build(value.opt(it), depth + 1) }
                     is JSONObject -> {
                         val type = value.optString("type")
                         val attrs = value.optJSONObject("attr")?.let { attr -> attr.keys().asSequence().associateWith { attr.opt(it)?.toString().orEmpty() } }.orEmpty()
                         val events = value.optJSONObject("events")?.let { ev -> ev.keys().asSequence().associateWith { ev.optString(it) } }.orEmpty()
-                        if (type == CARD && cardClick == null) cardClick = events["click"]
+                        if (type == CARD && cardClick == null && "notification" in attrs["entry"].orEmpty().split(",").map(String::trim)) cardClick = events["click"]
                         val node = Node(type, attrs["level"].orEmpty(), attrs, events, value.optString("shown", "").takeIf { it.isNotEmpty() })
-                        nodes += node
+                        count++
                         listOf(Tree(node, build(value.opt("children"), depth + 1)))
                     }
                     else -> emptyList()
@@ -272,7 +233,7 @@ class CloudTemplate(
                 ways.takeIf { it.isNotEmpty() }?.let { k to it }
             }.toMap() }.orEmpty()
             val defaults = root.optJSONObject("data")?.let(::flatten).orEmpty()
-            CloudTemplate(nodes, actions, defaults, strings, dir, cardClick, tree, resources)
+            CloudTemplate(actions, defaults, strings, dir, cardClick, tree, resources)
         }.getOrNull()
 
         /** 卡片数据只取第一层:文字、数字、真假原样转成文字,里面再套的对象或数组保留原文(与系统发送参数时的写法一致)。 */

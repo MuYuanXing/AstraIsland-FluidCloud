@@ -4,37 +4,33 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
-import com.astraflow.fluidcloud.hook.Logger
 import com.astraisland.events.EventBridge
 import com.astraisland.events.EventKind
+import com.astraisland.events.PageNode
 import com.astraisland.events.SystemEvent
 
 /**
- * 插件「流体云事件接入」这一边的来源(现行规则「系统事件接入」):收系统流体云送来的记录,读出内容、翻译成标准事件交给星河岛
- * (contracts/island-system-events.v1.json);星河岛告诉它接手了哪些事,它让系统自己的同一个胶囊让位(OfficialCloudYield);
- * 星河岛上点按钮时交回系统执行(OfficialCloudActions)。上不上岛、怎么摆由星河岛决定。
- * - 星河岛不在、没收下接入件时什么都不藏,系统流体云照常由系统显示。
- * - 已显示完的短提示在接入与该类内容仍开启时继续隐藏；关闭接入或对应分类后交还系统。
+ * 插件「流体云事件接入」这一边的来源(现行规则「系统事件接入」):收系统流体云送来的记录,读出原始内容整理成官方内容树
+ * (模板卡片按模板代入数据,直接通知按通知,航班火车按应用给的界面数据),翻译成标准事件交给星河岛
+ * (contracts/island-system-events.v1.json);系统自己的流体云画不画按 [hides] 一条规矩在出口决定(OfficialCloudYield);
+ * 星河岛上点按时交回系统执行(OfficialCloudActions)。怎么摆由星河岛决定。
  */
 object OfficialCloudSource {
     private const val TAG = "OfficialCloud"
+    /** 出口就地读到的记录的来源名 */
+    private const val DISPLAY_EXIT = "display-exit"
     private val main by lazy { Handler(Looper.getMainLooper()) }
     private val store = OfficialCloudStore()
     private var context: Context? = null
     private var actions: OfficialCloudActions? = null
     @Volatile private var settings = FluidCloudSettings()
     private var reportStatus: (String) -> Unit = {}
-    /** 检查用:出口就地读取的每一次投递(正式包为空);数投递次数与记录。 */
+    /** 检查用:出口就地读取的每一次投递(正式包为空) */
     @Volatile var displayIntakeObserver: ((Any) -> Unit)? = null
-    /** 检查用:星河岛报来的每一次接手情况(正式包为空);数推送次数。 */
-    @Volatile var islandStateObserver: ((Bundle) -> Unit)? = null
-    private val reportedGaps = linkedSetOf<String>()
-    private val diagSignatures = linkedSetOf<String>()
-    private class Translated(val snapshot: CloudSnapshot, val content: CloudContent, val openable: Boolean, val imageRevision: Long, val event: SystemEvent)
+
+    /** 每件事上一次整理好的结果:记录和共享位置的图都没变时直接用 */
+    private class Translated(val snapshot: CloudSnapshot, val imageRevision: Long, val record: CloudRecord, val event: SystemEvent)
     private val translated = HashMap<String, Translated>()
-    private val applyingIslandState = ThreadLocal.withInitial { false }
-    private var displayRefreshPosted = false
 
     /** 星河岛开着且在管事(星河岛报来的;没连上时为假):按钮只在这时执行 */
     @Volatile var islandActive = false
@@ -42,16 +38,11 @@ object OfficialCloudSource {
 
     /** 检查用:直接告诉它星河岛在不在管事 */
     fun islandActiveForTest(active: Boolean) { islandActive = active }
-    /** 星河岛此刻能露面:系统胶囊只在能露面时为星河岛接手的事让位 */
+    /** 星河岛此刻能露面(不是熄屏,也不是锁屏时关了锁屏显示) */
     @Volatile private var yieldAllowed = false
-    /** 星河岛接手的事、亮完的提示、一律藏起的(事件身份,星河岛报来的) */
-    private var handledIdentities: Set<String> = emptySet()
-    private var spentIdentities: Set<String> = emptySet()
-    private var alwaysIdentities: Set<String> = emptySet()
-    /** 上面几组换成的系统记录编号 */
-    @Volatile private var nativeClaims: Set<String> = emptySet()
-    @Volatile private var spentClaims: Set<String> = emptySet()
-    @Volatile private var alwaysClaims: Set<String> = emptySet()
+    /** 星河岛已经亮完的只亮一下的提示(事件身份) */
+    @Volatile private var spentIdentities: Set<String> = emptySet()
+
     /**
      * 在系统界面里开始:收下设置、准备执行按钮,向星河岛打招呼。[packageName]、[versionCode] 是插件自己的,星河岛按它核对。
      * [reportStatus] 把「这台手机能不能让系统胶囊让位」报给插件的页面,[reportIsland] 把星河岛收没收下插件报给插件的页面。
@@ -62,12 +53,10 @@ object OfficialCloudSource {
         this.context = context
         this.settings = settings
         this.reportStatus = reportStatus
-        if (actions == null) actions = runCatching { OfficialCloudActions(context) }
-            .onFailure { Logger.e(TAG, "official action receiver unavailable", it) }.getOrNull()
-        // 菜品图这类共享位置里的图在后台取,取好后重新交一次(现行规则「展开卡片总表」)
+        if (actions == null) actions = OfficialCloudActions(context)
+        // 菜品图这类共享位置里的图在后台取,取好后重新交一次
         OfficialCloudSharedImages.bind(context) { refresh() }
         AdapterBridge.start(packageName, versionCode, onAccepted = { synchronize() }, onState = ::onIslandState, onStatus = reportIsland)
-        // 握手成功时岛已经在管事,不必等第一份事件答复才允许点卡片。
         islandActive = AdapterBridge.connected()
         reportVisibility()
         synchronize()
@@ -79,171 +68,97 @@ object OfficialCloudSource {
             if (next == settings) return@Runnable
             settings = next
             synchronize()
+            OfficialCloudYield.refresh()
         }
         if (Looper.myLooper() == Looper.getMainLooper()) apply.run() else main.post(apply)
     }
 
     fun refresh() {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            synchronize()
-            OfficialCloudYield.refresh()
-        } else main.post {
+        val apply = Runnable {
             synchronize()
             OfficialCloudYield.refresh()
         }
+        if (Looper.myLooper() == Looper.getMainLooper()) apply.run() else main.post(apply)
     }
 
-    /**
-     * 把原生显示交接的实际执行状态报给插件页面,数据读取入口不作为成功依据。
-     * 还没定下来时也报,页面不沿用上一次开机留下的结果。
-     */
+    /** 把「系统胶囊能不能让位」报给插件页面;还没定下来时也报,页面不沿用上一次开机留下的结果 */
     fun reportVisibility() {
         val status = OfficialCloudYield.status
-        main.post { runCatching { reportStatus(status.report) } }
+        main.post { reportStatus(status.report) }
     }
 
-    fun receive(owner: String, revision: Long, change: CloudChange, models: List<Any>, reviewedPlugin: Boolean) {
-        // 参数列表先复制，回到主线程后读取系统已经创建的控件；不在系统回调里绘图或读文件。
+    /** 一个来源送来的一批记录(参数列表先复制,回到主线程再读) */
+    fun receive(owner: String, revision: Long, change: CloudChange, models: List<Any>) {
         val copy = models.toList()
         main.post {
-            runCatching {
-                val official = copy.filter(OfficialCloudReflection::isOfficial)
-                val records = if (change == CloudChange.REMOVE) emptyList() else official.mapNotNull { model ->
-                    captureSafely(model, revision, reviewedPlugin)
-                        ?: OfficialCloudReflection.nativeKey(model)?.let { store.previous(owner, it) }
-                }
-                val removed = official.mapNotNull(OfficialCloudReflection::nativeKey).toSet()
-                // 云卡到货诊断:每类新签名写一行(正式包可见),卡片有没有来、排好没有、带不带按钮、数据与模板读到没有一眼可知。
-                for (record in records) {
-                    val s = record.snapshot
-                    val sig = "${s.serviceId}|${s.packageName}|${s.entrance}|${s.rendered}|${record.content.title.take(20)}|${record.content.buttons.size}|${record.content.complete}"
-                    if (diagSignatures.add(sig)) {
-                        if (diagSignatures.size > 256) diagSignatures.clear()
-                        com.astraflow.fluidcloud.hook.Log.i(TAG, "cloud record: svc=${s.serviceId} pkg=${s.packageName} entry=${s.entrance} rendered=${s.rendered} " +
-                            "visible=${s.visible} title=${record.content.title.take(24)} " +
-                            "buttons=${record.content.buttons.map { "${it.label}:${it.action?.method ?: if (it.pending != null) "pending" else "view"}" }} " +
-                            "complete=${record.content.complete} gaps=${record.content.gaps} data=${s.data.keys.take(24)} version=${s.templateVersion} page=${s.pageId} " +
-                            "card=${s.nativeCard != null}/${s.nativeSeedling != null} nv=${s.nativeViews.values.sumOf { it.size }}" +
-                            // 图读不到时写下图片字段的值(只取前 60 个字),看得出系统给的是网址、文件还是别的
-                            (if ("image-unavailable" in record.content.gaps) " images=" + s.data.filterKeys { k -> IMAGE_FIELD.containsMatchIn(k) }
-                                .entries.take(4).joinToString(",") { (k, v) -> "$k=${v.take(60)}" } else ""))
-                    }
-                }
-                acceptCaptured(owner, revision, change, records, removed)
-                if (change != CloudChange.REMOVE && records.any { !it.content.complete }) {
-                    // 内容可能先到，系统的详细控件稍后才创建。只补读本次仍有效、还没读全的对象，读全了的不再读，不重建卡片。
-                    val waiting = records.filter { !it.content.complete }.mapTo(HashSet()) { it.snapshot.nativeKey }
-                    for (delay in listOf(250L, 1000L)) main.postDelayed({
-                        if (waiting.isNotEmpty() && store.revision(owner) == revision) runCatching {
-                            val enriched = official.filter { OfficialCloudReflection.nativeKey(it) in waiting }
-                                .mapNotNull { model -> captureSafely(model, revision, reviewedPlugin) }
-                            enriched.filter { it.content.complete }.forEach { waiting.remove(it.snapshot.nativeKey) }
-                            if (store.enrich(owner, revision, enriched)) synchronize()
-                        }.onFailure { reportFailure("enrich", it, null) }
-                    }, delay)
-                }
-            }.onFailure {
-                // 这一来源读取失败时立即取消接管，原系统恢复显示，不能留下半条胶囊。
-                store.removeOwner(owner)
-                synchronize()
-                reportFailure("receive", it, null)
-            }
+            val official = copy.filter(OfficialCloudReflection::isOfficial)
+            val records = if (change == CloudChange.REMOVE) emptyList() else official.mapNotNull { capture(it, revision) }
+            acceptCaptured(owner, revision, change, records, official.mapNotNull(OfficialCloudReflection::nativeKey).toSet())
         }
     }
 
-    /** 一条记录读失败只丢这一条,不连累同一批送来的其它记录;原因写进岛的日志(正式包也看得到)。 */
-    private fun captureSafely(model: Any, revision: Long, reviewedPlugin: Boolean): CloudRecord? = try {
-        capture(model, revision, reviewedPlugin)
-    } catch (failure: Throwable) {
-        reportFailure("capture", failure, runCatching { OfficialCloudReflection.describe(model) }.getOrNull())
-        null
+    /**
+     * 读一条系统记录的原始事实。模板卡片的数据照系统卡片引擎的读法:说明文件自带的默认内容打底、提供方送来的覆盖,
+     * 还没翻译的代号换成当前语言;服务意图用来认换了新服务号的老服务。
+     */
+    private fun capture(model: Any, revision: Long): CloudSnapshot? {
+        val raw = OfficialCloudReflection.snapshot(model, revision) ?: return null
+        if (raw.notification != null) return raw
+        val context = context ?: return null
+        val intent = OfficialCloudTemplates.intentAction(context, raw.serviceId, raw.templateVersion)
+        if (raw.remoteData != null) return raw.copy(intentAction = intent)
+        val template = OfficialCloudTemplates.current(context, raw.serviceId, raw.templateVersion, raw.pageId)
+        return raw.copy(data = template?.scope(raw.data) ?: raw.data, intentAction = intent)
     }
 
-    private val reportedFailures = linkedSetOf<String>()
-
-    /** 同一处、同一种失败只写一次,带调用栈。 */
-    private fun reportFailure(stage: String, failure: Throwable, what: String?) {
-        val where = failure.stackTrace.firstOrNull { it.className.contains("officialcloud") } ?: failure.stackTrace.firstOrNull()
-        val sig = "$stage|${failure.javaClass.name}|$where"
-        val fresh = synchronized(reportedFailures) { if (reportedFailures.size > 128) reportedFailures.clear(); reportedFailures.add(sig) }
-        if (fresh) com.astraflow.fluidcloud.hook.Log.e(TAG, "official $stage failed${what?.let { " ($it)" }.orEmpty()}", failure)
+    /**
+     * 系统自己的这条流体云此刻藏不藏(现行规则「系统事件接入」):接入开着、星河岛连着并在管事、这一类没关时藏——
+     * 星河岛此刻能露面时全部藏;不能露面(熄屏,锁屏时关了锁屏显示)时只藏充电与电池提示(由星河岛自己的充电卡显示)
+     * 和星河岛已经亮完的只亮一下的提示。其余交给系统显示。
+     */
+    fun hides(nativeKey: String): Boolean {
+        if (!settings.access || !islandActive || !AdapterBridge.connected() || !kindAllowed(nativeKey)) return false
+        if (yieldAllowed) return true
+        val record = store.record(nativeKey) ?: return false
+        val kind = OfficialCloudServices.kind(record)
+        return kind == EventKind.CHARGING || kind == EventKind.BATTERY_TIP || record.key in spentIdentities
     }
 
-    /** 当前藏起的系统胶囊个数(诊断用)。 */
-    fun hiddenCount(): Int = OfficialCloudYield.yieldedCount()
-    fun requestedNativeKeys(): Set<String> = (nativeClaims + alwaysClaims + spentClaims).filterTo(linkedSetOf(), ::suppressesNative)
+    /** 认不出身份的状态栏记录藏不藏:星河岛能露面时和别的记录一样藏 */
+    fun hidesUnknown(): Boolean = settings.access && islandActive && AdapterBridge.connected() && yieldAllowed
 
-    /**
-     * 通知变成的胶囊在接入开且星河岛已连时先藏(现行规则「系统事件接入」):这类事件没有系统数据入口,
-     * 等接手确认再藏会先漏出原生胶囊;岛不在、没收下或接入关时集合为空,全部交还系统。
-     */
-    fun prehiddenNativeKeys(): Set<String> =
-        if (settings.access && islandActive && AdapterBridge.connected()) store.commonNativeKeys() else emptySet()
+    /** 这条系统记录已经从数据门读到了(出口就地读的不算) */
+    fun known(nativeKey: String): Boolean = store.record(nativeKey, except = DISPLAY_EXIT) != null
 
-    /**
-     * 出口默认拦截的总开关(现行规则「系统事件接入」):记录要上屏必须进显示列表,接入开且星河岛在管事、
-     * 此刻能露面时状态栏列表默认全部隐藏——不论记录从哪条数据门进来,未知的门也一并盖住。
-     * 接入关闭、星河岛不在、息屏等不露面的时刻全部交还系统(与接手让位同一露面条件)。
-     */
-    fun exitBlocking(): Boolean = settings.access && islandActive && AdapterBridge.connected() && yieldAllowed
-
-    /** 出口就地读取的记录:整批替换时保留所有仍有效的记录,不让两条记录互相顶掉形成 A/B 抖动。 */
-    private val displayRecords = linkedMapOf<String, CloudRecord>()
-    /** 非空状态栏列表里暂时缺失的记录;下一轮仍未出现才删除,空列表不参与判断。 */
+    /** 出口就地读到的记录(没经过数据门的):整批替换时保留所有仍在的记录 */
+    private val displayRecords = linkedMapOf<String, CloudSnapshot>()
+    /** 非空状态栏列表里暂时缺失的记录;下一轮仍未出现才删除,空列表不参与判断 */
     private val displayAbsent = HashMap<String, Runnable>()
     private const val DISPLAY_REMOVE_DELAY_MS = 1_000L
 
-    private fun sameDisplayImage(a: CloudImage?, b: CloudImage?): Boolean {
-        if (a === b) return true
-        if (a == null || b == null || a.key != b.key) return false
-        if (!java.util.Arrays.equals(a.bytes, b.bytes)) return false
-        if (a.bitmap !== b.bitmap) {
-            if (a.bitmap == null || b.bitmap == null || a.bitmap.width != b.bitmap.width || a.bitmap.height != b.bitmap.height ||
-                a.bitmap.config != b.bitmap.config || !a.bitmap.sameAs(b.bitmap)) return false
-        }
-        if (a.platform !== b.platform) {
-            if (a.platform == null || b.platform == null) return false
-            val same = runCatching {
-                a.platform.type == b.platform.type && a.platform.resPackage == b.platform.resPackage &&
-                    a.platform.resId == b.platform.resId && a.platform.uri == b.platform.uri
-            }.getOrDefault(false)
-            if (!same) return false
-        }
-        return a.copy(bytes = b.bytes, bitmap = b.bitmap, platform = b.platform) == b
-    }
-
-    /** 出口上截下的记录就地读取;同一条内容不重复同步,真实更新和多条记录都完整保留。 */
+    /** 出口上没经过数据门的记录就地读取;内容和上一次一样时不重新交 */
     fun receiveFromDisplay(model: Any) {
         main.post {
-            runCatching {
-                val raw = OfficialCloudReflection.fields(model.javaClass).mapNotNull { field ->
-                    runCatching { field.isAccessible = true; field.get(model) }.getOrNull()
-                }.firstOrNull { it !== model && OfficialCloudReflection.call(it, "getSourceType") != null } ?: model
-                if (OfficialCloudReflection.nativeKey(raw) == null) return@post
-                val record = capture(raw, OfficialCloudHook.nextRevision(), reviewedPlugin = false) ?: run {
-                    if (notedUnreadable.add(raw.javaClass.name)) com.astraflow.fluidcloud.hook.Log.w(TAG,
-                        "display-exit record unreadable on ${raw.javaClass.name}; hidden without reading")
-                    return@post
-                }
-                val key = record.snapshot.nativeKey
-                val previous = displayRecords[key]
-                val unchanged = previous != null && previous.content == record.content &&
-                    sameDisplayImage(previous.snapshot.icon, record.snapshot.icon) &&
-                    previous.snapshot.copy(revision = record.snapshot.revision, sourceUpdatedAtMs = record.snapshot.sourceUpdatedAtMs,
-                        receivedAtElapsedMs = record.snapshot.receivedAtElapsedMs, icon = record.snapshot.icon,
-                        nativeModel = record.snapshot.nativeModel, notification = record.snapshot.notification,
-                        nativeViews = record.snapshot.nativeViews, nativeCard = record.snapshot.nativeCard,
-                        nativeSeedling = record.snapshot.nativeSeedling) == record.snapshot
-                if (unchanged) return@post
-                displayRecords[key] = record
-                displayAbsent.remove(key)?.let(main::removeCallbacks)
-                displayIntakeObserver?.invoke(record)
-                acceptCaptured("display-exit", OfficialCloudHook.nextRevision(), CloudChange.REPLACE, displayRecords.values.toList())
-            }.onFailure { reportFailure("display-exit", it, OfficialCloudReflection.describe(model)) }
+            val raw = OfficialCloudReflection.fields(model.javaClass).firstNotNullOfOrNull { field ->
+                field.isAccessible = true
+                field.get(model)?.takeIf { it !== model && OfficialCloudReflection.call(it, "getSourceType") != null }
+            } ?: model
+            val revision = OfficialCloudHook.nextRevision()
+            val record = capture(raw, revision) ?: run {
+                if (notedUnreadable.add(raw.javaClass.name)) com.astraflow.fluidcloud.hook.Log.w(TAG,
+                    "display-exit record unreadable on ${raw.javaClass.name}")
+                return@post
+            }
+            val previous = displayRecords[record.nativeKey]
+            if (previous != null && previous.copy(revision = record.revision, sourceUpdatedAtMs = record.sourceUpdatedAtMs) == record) return@post
+            displayRecords[record.nativeKey] = record
+            displayAbsent.remove(record.nativeKey)?.let(main::removeCallbacks)
+            displayIntakeObserver?.invoke(record)
+            acceptCaptured(DISPLAY_EXIT, revision, CloudChange.REPLACE, displayRecords.values.toList())
         }
     }
 
-    /** 非空状态栏列表的缺席只登记延迟清理;真正删除发生在回到主线程之后,不在 filter 调用栈里重入。 */
+    /** 非空状态栏列表的缺席只登记延迟清理;真正删除发生在回到主线程之后,不在系统的显示调用里重入 */
     fun noteDisplayList(present: Set<String>) {
         for (key in displayRecords.keys) {
             if (key in present) {
@@ -252,7 +167,7 @@ object OfficialCloudSource {
                 val task = Runnable {
                     displayAbsent.remove(key)
                     if (displayRecords.remove(key) != null) {
-                        acceptCaptured("display-exit", OfficialCloudHook.nextRevision(), CloudChange.REPLACE, displayRecords.values.toList())
+                        acceptCaptured(DISPLAY_EXIT, OfficialCloudHook.nextRevision(), CloudChange.REPLACE, displayRecords.values.toList())
                     }
                 }
                 displayAbsent[key] = task
@@ -264,99 +179,25 @@ object OfficialCloudSource {
     private val notedUnreadable = linkedSetOf<String>()
 
     /**
-     * 这一类内容此刻归不归星河岛接(与星河岛四类开关同义):分类关闭的事件不上岛,
-     * 出口默认拦截对它们放行,交还系统显示。
+     * 这一类内容此刻归不归星河岛接:分类关闭的事件不上岛,出口对它放行,交还系统显示。分类与星河岛一致
+     * (星河岛按事件种类归成自己的活动种类,再按四类开关放行):音乐交给星河岛自己的音乐,只看接入开关。
      */
     fun kindAllowed(nativeKey: String): Boolean {
-        val kind = store.kindOf(nativeKey) ?: return true
+        val kind = store.record(nativeKey)?.let(OfficialCloudServices::kind) ?: return true
         return when (kind) {
-            EventKind.CALL, EventKind.SATELLITE_CALL -> settings.call
-            EventKind.TIMER, EventKind.STOPWATCH, EventKind.ALARM, EventKind.FLASH_ALARM,
-            EventKind.GAME_TIMER, EventKind.GAME_COUNTDOWN -> settings.timer
-            EventKind.SCREEN_RECORDING, EventKind.SOUND_RECORDING, EventKind.RECORDING_SAVED,
-            EventKind.MICROPHONE_SERVICE, EventKind.SYSTEM_SWITCH, EventKind.TASK_PROGRESS,
-            EventKind.ORDER_PROGRESS, EventKind.PARCEL_PICKUP, EventKind.RIDE, EventKind.NAVIGATION,
-            EventKind.TRAFFIC_LIGHT, EventKind.REMINDER, EventKind.APP_NOTICE, EventKind.UNLISTED,
-            EventKind.MUSIC -> settings.live
-            EventKind.CHARGING, EventKind.BATTERY_TIP, EventKind.DEVICE -> settings.status
+            EventKind.CALL -> settings.call
+            EventKind.TIMER, EventKind.STOPWATCH, EventKind.ALARM, EventKind.FLASH_ALARM, EventKind.GAME_TIMER -> settings.timer
+            EventKind.SCREEN_RECORDING, EventKind.SOUND_RECORDING, EventKind.MICROPHONE_SERVICE, EventKind.CHARGING,
+            EventKind.BATTERY_TIP, EventKind.DEVICE, EventKind.SYSTEM_SWITCH -> settings.status
+            EventKind.MUSIC -> true
             else -> settings.live
         }
     }
 
-    fun aliveNativeKeys(): Set<String> = store.aliveNativeKeys()
-    fun confirmedIdentities(): Set<String> {
-        val done = OfficialCloudYield.confirmedKeys()
-        return (handledIdentities + spentIdentities + alwaysIdentities).filterTo(linkedSetOf()) { identity ->
-            val keys = store.nativeKeys(identity)
-            keys.isNotEmpty() && keys.all { it in done }
-        }
-    }
-
-    private val unlistedLogged = linkedSetOf<String>()
-    private val valueLoggedAt = HashMap<String, Long>()
-    private var valueLines = 0
-
-    /**
-     * 按「展开卡片总表」排卡片时写的日志(正式包也看得到,现行规则「展开卡片总表」):
-     * 表里没有的服务每个写一行;外卖、打车、导航按几项不涉及地址的字段写下系统送来的值(同一服务 5 秒一行、总共最多 400 行),
-     * 用来核对系统真实的写法(例如红绿灯秒数怎么写、进度是第几段)。路名、车牌、订单号这类不写。
-     */
-    private fun noteLayout(snapshot: CloudSnapshot, layout: OfficialCloudServices.Layout, record: CloudRecord) {
-        if (OfficialCloudServices.kind(snapshot) in SYSTEM_KINDS) return
-        if (layout == OfficialCloudServices.Layout.UNLISTED) {
-            if (unlistedLogged.size < 128 && unlistedLogged.add(snapshot.serviceId)) com.astraflow.fluidcloud.hook.Log.i(TAG,
-                "service ${snapshot.serviceId} (${snapshot.serviceName.take(24)}) is not in the card table; laid out by the official card structure")
-            return
-        }
-        val fields = VALUE_FIELDS[layout] ?: return
-        val now = SystemClock.elapsedRealtime()
-        if (valueLines >= 400 || valueLoggedAt[snapshot.serviceId]?.let { now - it < 5_000L } == true) return
-        valueLoggedAt[snapshot.serviceId] = now
-        valueLines++
-        val values = fields.mapNotNull { key -> snapshot.data[key]?.let { "$key=${it.take(24)}" } }
-        // 左边主图从哪来:共享位置(写提供方)、说明文件的替代图、说明文件自带的图、卡片数据带来的图
-        val picture = record.content.levelImages["D1"]?.let { when {
-            it.shared != null -> "shared:" + android.net.Uri.parse(it.shared).authority
-            it.substitute -> "substitute"
-            it.key.startsWith("template:") -> "template"
-            else -> "data"
-        } }
-        val p = record.content.progress
-        com.astraflow.fluidcloud.hook.Log.i(TAG, "card values: svc=${snapshot.serviceId} pkg=${snapshot.packageName} host=${snapshot.hostPackage} " +
-            "layout=$layout page=${snapshot.pageId} $values picture=$picture progress=${p?.fraction}/${p?.steps}/${p?.labels} " +
-            "light=${record.content.levels["C33"] != null}")
-    }
-
-    private val VALUE_FIELDS = mapOf(
-        OfficialCloudServices.Layout.NAVIGATION to listOf("distanceWithUnit", "distanceWithUnitCapsule", "operation", "isShowWhere",
-            "isHasTrafficLight", "isOs14ShowTrafficLight", "countdownTime", "bigLightName", "smallLightName", "isShowLanes",
-            "rightInfo", "percent", "node_labels", "showProgress", "isDoubleLine", "showOverViewOpen", "showOverViewClose"),
-        OfficialCloudServices.Layout.TAKEOUT to listOf("cardStatus", "cardStatusDesc", "capsuleTitle", "capsuleCardStatus", "showProgress",
-            "fluidPercent", "currStep", "currProgress", "progressTabContent", "isShowFluidButton", "btnSee", "showCapsuleIcon", "projected", "deliver"),
-        OfficialCloudServices.Layout.RIDE to listOf("fluid_capsule_left", "fluid_capsule_status", "fluid_pnael_title", "isShowFluidButton",
-            "fluidBtnText", "isShowProgress", "fluid_percent", "fluid_percent_step", "progressTabContent"),
-    )
-
-    /** 读一条系统记录:数据、模板(按钮登记的动作)、通用内容,再按服务整理。 */
-    private fun capture(model: Any, revision: Long, reviewedPlugin: Boolean): CloudRecord? {
-        val raw = OfficialCloudReflection.snapshot(model, revision, reviewedPlugin) ?: return null
-        val template = context?.takeIf { !raw.serviceId.startsWith("common:") }?.let {
-            OfficialCloudTemplates.current(it, raw.serviceId, raw.templateVersion, raw.pageId)
-        }
-        // 数据按系统卡片引擎的读法:说明文件自带的默认内容打底、提供方送来的覆盖,还没翻译的代号换成当前语言
-        // (现行规则「系统事件接入」);读不到模板时代号一律当空。服务意图用来认换了新服务号的老服务(现行规则「展开卡片总表」)
-        val intent = context?.takeIf { !raw.serviceId.startsWith("common:") }
-            ?.let { OfficialCloudTemplates.intentAction(it, raw.serviceId, raw.templateVersion) }.orEmpty()
-        val snapshot = raw.copy(data = template?.scope(raw.data) ?: CloudTemplate.stripKeys(raw.data), intentAction = intent)
-        val content = OfficialCloudDecoder.decode(snapshot, template) ?: CloudContent("", "", "", gaps = setOf("content-unavailable"))
-        val refined = OfficialCloudServices.refine(snapshot, content, SystemClock.elapsedRealtime())
-        return CloudRecord(snapshot.copy(root = null, images = emptyMap()), refined)
-    }
-
-    fun acceptCaptured(owner: String, revision: Long, change: CloudChange, records: List<CloudRecord>, removed: Set<String> = emptySet()) {
+    fun acceptCaptured(owner: String, revision: Long, change: CloudChange, records: List<CloudSnapshot>, removed: Set<String> = emptySet()) {
         val applied = store.apply(owner, revision, change, records, removed)
-        if (applied && owner != "display-exit") {
-            val gone = if (change == CloudChange.REMOVE) removed else records.filter { it.snapshot.ended }.map { it.snapshot.nativeKey }.toSet()
+        if (applied && owner != DISPLAY_EXIT) {
+            val gone = if (change == CloudChange.REMOVE) removed else records.filter { it.ended }.mapTo(HashSet()) { it.nativeKey }
             for (key in gone) {
                 displayRecords.remove(key)
                 displayAbsent.remove(key)?.let(main::removeCallbacks)
@@ -365,136 +206,88 @@ object OfficialCloudSource {
         if (applied) synchronize()
     }
 
-
-    /** 系统自带的通话、计时、录制、充电、耳机、音乐、开关和录完的页面:不按「展开卡片总表」排,不写排法的日志 */
-    private val SYSTEM_KINDS = setOf(EventKind.CALL, EventKind.TIMER, EventKind.STOPWATCH, EventKind.ALARM, EventKind.FLASH_ALARM,
-        EventKind.GAME_TIMER, EventKind.SCREEN_RECORDING, EventKind.SOUND_RECORDING, EventKind.MICROPHONE_SERVICE, EventKind.CHARGING,
-        EventKind.BATTERY_TIP, EventKind.DEVICE, EventKind.MUSIC, EventKind.SYSTEM_SWITCH, EventKind.RECORDING_SAVED)
-
-    /** 监听者对象已经不在了:它留下的记录撤掉,相应的卡片与藏起的系统胶囊一并恢复。 */
+    /** 监听者对象已经不在了:它留下的记录撤掉,相应的卡片与藏起的系统胶囊一并恢复 */
     fun dropOwners(owners: Set<String>) {
         main.post { if (store.removeOwners(owners)) synchronize() }
     }
 
-    /**
-     * 接入与分类归属均有效时按星河岛的接手结果让位；接入关闭后全部交还系统。
-     * 已完成的提示与充电使用同一归属，其余内容还要求星河岛此刻能露面。
-     */
-    fun suppressesNative(nativeKey: String?): Boolean = nativeKey != null && settings.access && islandActive &&
-        (nativeKey in spentClaims || nativeKey in alwaysClaims || (yieldAllowed && nativeKey in nativeClaims))
+    /** 星河岛上点了元素:按这张卡片此刻的数据执行元素登记的动作([action] 是「page:动作名」);送达返回真 */
+    fun perform(identity: String, action: String): Boolean = actions?.perform(identity, action) == true
 
-    /** 星河岛上点了按钮([buttonId])或卡片([buttonId] 为空):按系统登记的动作交回系统执行;送达返回真 */
-    fun perform(identity: String, buttonId: String?): Boolean = actions?.perform(identity, buttonId) == true
+    /** 刚才按的那个元素这一下打开了页面没有 */
+    fun openedPage(identity: String, action: String): Boolean = actions?.openedPage(identity, action) == true
 
-    /** 刚才按的那颗按钮这一下打开了页面没有 */
-    fun openedPage(identity: String, buttonId: String): Boolean = actions?.openedPage(identity, buttonId) == true
-
-    /** 全部记录翻译成标准事件交给星河岛;记下每件事现在能不能点开 */
+    /** 全部记录整理成官方内容树、翻译成标准事件交给星河岛 */
     private fun synchronize() {
-        if (context == null) return
-        runCatching {
-            val records = store.active()
-            val imageRevision = OfficialCloudSharedImages.revision
-            val events = ArrayList<SystemEvent>(records.size)
-            val liveTranslations = HashSet<String>(records.size)
-            for (record in records) {
-                val nativeKey = record.snapshot.nativeKey
-                liveTranslations += nativeKey
-                val openable = actions?.update(record) == true
-                val cached = translated[nativeKey]?.takeIf {
-                    it.snapshot === record.snapshot && it.content === record.content && it.openable == openable &&
-                        it.imageRevision == imageRevision
-                }
-                val event = cached?.event ?: runCatching { OfficialCloudTranslator.translate(record, openable) }
-                    .onFailure { reportFailure("translate", it, record.snapshot.serviceId) }.getOrNull()?.also {
-                        translated[nativeKey] = Translated(record.snapshot, record.content, openable, imageRevision, it)
-                    } ?: continue
-                events += event
-                noteLayout(record.snapshot, OfficialCloudServices.layout(record.snapshot), record)
-                val content = record.content
-                if (content.gaps.isNotEmpty()) {
-                    val gapKey = record.snapshot.serviceId + ":" + content.gaps.sorted().joinToString(",")
-                    if (reportedGaps.size < 128 && reportedGaps.add(gapKey)) com.astraflow.fluidcloud.hook.Log.i(TAG, "service ${record.snapshot.serviceId} content gaps: ${content.gaps}")
-                }
-            }
-            translated.keys.retainAll(liveTranslations)
-            actions?.retain(records.mapTo(HashSet()) { it.snapshot.key })
-            AdapterBridge.push(events, settings, store.aliveIdentities())
-            // 预隐藏集合跟着数据走:通知胶囊新到、结束时重算显示交接,不依赖接手答复
-            prehiddenClaims = prehiddenNativeKeys()
-            remapClaims()
-            // 只有真正的新记录(系统记录编号第一次出现)才重置退避预算:接手名单增减、预隐藏抖动都不重置,
-            // 否则一条永远执行不了的事件会让退避预算无限复活,每一轮都再重算一遍。
-            val live = store.allNativeKeys()
-            if ((live - knownNativeKeys).isNotEmpty()) OfficialCloudYield.resetRetries()
-            knownNativeKeys = live
-        }.onFailure { reportFailure("synchronize", it, null) }
-    }
-
-    /** 星河岛报来的接手情况(对比上一次,只留这次真正要用的几组) */
-    private data class IslandState(val handled: Set<String>, val spent: Set<String>, val always: Set<String>,
-                                   val active: Boolean, val yieldAllowed: Boolean)
-
-    /** 最近一次星河岛报来的接手情况;一样的推送不再重算显示交接。 */
-    private var lastIslandState: IslandState? = null
-
-    /** 星河岛报来接手情况(主线程上) */
-    fun onIslandState(state: Bundle) {
-        if (OfficialCloudYield.isRefreshing()) {
-            // 重算途中到达的接手情况不能丢,也不能用它去重后续重试;本轮结束后按最新状态再算。
-            main.post { onIslandState(state) }
-            return
+        val context = context ?: return
+        val imageRevision = OfficialCloudSharedImages.revision
+        val events = ArrayList<SystemEvent>()
+        val live = HashSet<String>()
+        for (snapshot in store.active()) {
+            live += snapshot.nativeKey
+            val done = translated[snapshot.nativeKey]?.takeIf { it.snapshot === snapshot && it.imageRevision == imageRevision }
+                ?: translate(context, snapshot, imageRevision)?.also { translated[snapshot.nativeKey] = it }
+                ?: continue
+            actions?.update(done.record)
+            events += done.event
         }
-        islandStateObserver?.invoke(state)
-        fun set(key: String) = state.getStringArray(key)?.toSet().orEmpty()
-        val next = IslandState(set(EventBridge.KEY_HANDLED), set(EventBridge.KEY_SPENT), set(EventBridge.KEY_ALWAYS),
-            state.getBoolean(EventBridge.KEY_ACTIVE), state.getBoolean(EventBridge.KEY_YIELD_ALLOWED))
-        val targetBefore = OfficialCloudYield.handoverTarget()
-        handledIdentities = next.handled
-        spentIdentities = next.spent
-        alwaysIdentities = next.always
-        islandActive = next.active
-        yieldAllowed = next.yieldAllowed
-        remapClaims()
-        // 接手情况一样、要交接的记录也一样:不必再重算(重算又会跟着原生重绘互相续命)。
-        val same = next == lastIslandState && targetBefore == OfficialCloudYield.handoverTarget() && OfficialCloudYield.canSkipDuplicateState()
-        lastIslandState = next
-        if (same) return
-        applyingIslandState.set(true)
-        try { OfficialCloudYield.refresh() } finally { applyingIslandState.set(false) }
+        translated.keys.retainAll(live)
+        actions?.retain(store.active().mapTo(HashSet()) { it.key })
+        AdapterBridge.push(events, settings, store.aliveIdentities())
     }
-
-    /** 显示管理对象在接手答复之外恢复或失效时，主动把现有事件再交一次，让岛重新核对实际确认。 */
-    fun onDisplayReconciled() {
-        if (applyingIslandState.get() == true || displayRefreshPosted) return
-        displayRefreshPosted = true
-        // 不在原生显示重算的调用栈里再次进入岛和桥接；恢复通知合并在下一轮主线程执行。
-        main.post { displayRefreshPosted = false; refresh() }
-    }
-
-    /** 最近一次 synchronize 算出的预隐藏集合;变了才让显示交接重算 */
-    private var prehiddenClaims: Set<String> = emptySet()
-
-    /** 见过的系统记录编号;第一次出现的记录才算真正的新记录(只有它重置退避预算) */
-    private var knownNativeKeys: Set<String> = emptySet()
 
     /**
-     * 星河岛报来的事件身份换成系统记录编号(系统记录会换,同一件事可能有几条);变了返回真。
-     * 星河岛还不在、没收下接入件时什么都不藏。
+     * 一条记录整理成官方内容树并翻译成标准事件。系统送来的数据千奇百怪,这一步出错时写一行日志、这一条不上岛,
+     * 不连累其它记录,也不让系统界面崩掉;不沿用上一版,不换别的画法(插件里唯一的一处出错拦截)。
      */
-    private fun remapClaims(): Boolean {
-        val connected = AdapterBridge.connected()
-        fun native(identities: Set<String>) = if (!connected) emptySet() else identities.flatMapTo(linkedSetOf()) { store.nativeKeys(it) }
-        val hide = native(handledIdentities)
-        val spent = native(spentIdentities)
-        val always = native(alwaysIdentities)
-        val changed = hide != nativeClaims || spent != spentClaims || always != alwaysClaims
-        nativeClaims = hide; spentClaims = spent; alwaysClaims = always
-        return changed
+    private fun translate(context: Context, snapshot: CloudSnapshot, imageRevision: Long): Translated? = try {
+        val views = snapshot.remoteData?.let(OfficialRemotePage::read)
+        (views?.let(OfficialRemotePage::page) ?: page(context, snapshot))?.let { page ->
+            val record = CloudRecord(snapshot, page, views)
+            Translated(snapshot, imageRevision, record, OfficialCloudTranslator.translate(record))
+        }
+    } catch (failure: Exception) {
+        noteOnce("failed:${snapshot.serviceId}:${failure.javaClass.name}") {
+            com.astraflow.fluidcloud.hook.Log.e(TAG, "service ${snapshot.serviceId} page ${snapshot.pageId} not readable", failure)
+        }
+        null
     }
 
-    /** 卡片数据里放图片的字段名(诊断用) */
-    private val IMAGE_FIELD = Regex("(?i)(icon|image|img|logo|pic)")
+    /** 这条记录这一页的官方内容树:直接通知按通知,其余按模板代入数据(航班火车照界面,见 [translate]) */
+    private fun page(context: Context, snapshot: CloudSnapshot): PageNode? {
+        snapshot.notification?.let { return OfficialDirectPage.build(it) ?: noteMissing(snapshot, "notification without live alert content") }
+        val template = OfficialCloudTemplates.current(context, snapshot.serviceId, snapshot.templateVersion, snapshot.pageId)
+            ?: return noteMissing(snapshot, "template not found")
+        return OfficialCloudPage.build(snapshot, template) ?: noteMissing(snapshot, "template page has no card")
+    }
+
+    private fun noteMissing(snapshot: CloudSnapshot, why: String): PageNode? {
+        noteOnce("missing:${snapshot.serviceId}:${snapshot.templateVersion}:${snapshot.pageId}:$why") {
+            com.astraflow.fluidcloud.hook.Log.w(TAG, "service ${snapshot.serviceId} v${snapshot.templateVersion} page ${snapshot.pageId}: $why")
+        }
+        return null
+    }
+
+    private val noted = linkedSetOf<String>()
+
+    private fun noteOnce(key: String, write: () -> Unit) {
+        if (noted.size < 256 && noted.add(key)) write()
+    }
+
+    /**
+     * 星河岛报来的情况(主线程):在不在管事、此刻能不能露面、已经亮完的只亮一下的提示;变了就请系统按新条件重算状态栏那一份。
+     * 星河岛不再收下插件时报一次「不在管事」,系统胶囊全部交还系统。
+     */
+    fun onIslandState(state: Bundle) {
+        val active = state.getBoolean(EventBridge.KEY_ACTIVE)
+        val shown = state.getBoolean(EventBridge.KEY_YIELD_ALLOWED)
+        val spent = state.getStringArray(EventBridge.KEY_SPENT)?.toSet().orEmpty()
+        if (active == islandActive && shown == yieldAllowed && spent == spentIdentities) return
+        islandActive = active
+        yieldAllowed = shown
+        spentIdentities = spent
+        OfficialCloudYield.refresh()
+    }
 
     fun resetForTest() {
         AdapterBridge.stop()
@@ -502,18 +295,14 @@ object OfficialCloudSource {
         context = null
         settings = FluidCloudSettings()
         reportStatus = {}
-        store.clear(); reportedGaps.clear(); diagSignatures.clear(); translated.clear(); displayRefreshPosted = false
-        islandActive = false; yieldAllowed = false
-        handledIdentities = emptySet(); spentIdentities = emptySet(); alwaysIdentities = emptySet()
-        nativeClaims = emptySet(); spentClaims = emptySet(); alwaysClaims = emptySet(); prehiddenClaims = emptySet()
-        notedUnreadable.clear()
-        displayIntakeObserver = null; islandStateObserver = null
+        store.clear(); translated.clear(); noted.clear(); notedUnreadable.clear()
+        islandActive = false; yieldAllowed = false; spentIdentities = emptySet()
+        displayIntakeObserver = null
         displayAbsent.values.forEach(main::removeCallbacks); displayAbsent.clear()
-        displayRecords.clear(); lastIslandState = null; knownNativeKeys = emptySet()
+        displayRecords.clear()
         OfficialCloudImages.clear()
         OfficialCloudTemplates.clear()
         OfficialCloudSystemTips.clear()
         OfficialCloudSharedImages.clear()
-        unlistedLogged.clear(); valueLoggedAt.clear(); valueLines = 0
     }
 }

@@ -9,12 +9,12 @@ import java.util.function.Function
  * 接入件到了或星河岛到了,接入件向星河岛打招呼(带包名、版本);星河岛核对通过才收它的事件。
  *
  * - 接入件 → 星河岛:[OP_HELLO] 打招呼,[OP_EVENTS] 全部事件和接入件的设置。
- * - 星河岛 → 接入件:[OP_READY] 星河岛到了,[OP_STATE] 星河岛接手了哪些事,[OP_PERFORM] 点按钮或卡片,
+ * - 星河岛 → 接入件:[OP_READY] 星河岛到了,[OP_STATE] 星河岛管不管事、能不能露面,[OP_PERFORM] 点按钮或卡片,
  *   [OP_OPENED] 刚才那一下打开了页面没有。
  */
 object EventBridge {
     /** 见面与交换的版本;两边不一样时不交换 */
-    const val VERSION = 2
+    const val VERSION = 3
 
     /** System.getProperties() 里放两边入口的键 */
     const val ISLAND = "com.astraisland.events.island"
@@ -45,22 +45,17 @@ object EventBridge {
     const val KEY_SETTINGS = "settings"
     /** 系统尚未结束的事件身份,不以本次是否读到可显示内容判断结束。 */
     const val KEY_ALIVE = "alive"
-    /** 接手决定的同步答复:原生显示交接已执行的事件身份。未确认的事件继续由系统显示。 */
-    const val KEY_CONFIRMED = "confirmed"
 
     // ── 星河岛 → 接入件 ──
     /** 星河岛到了(接入件先到时由星河岛发):接入件收到后打招呼 */
     const val OP_READY = "ready"
     /**
-     * 星河岛接手了哪些事(都是事件身份):[KEY_HANDLED] 接手的(上了星河岛,或星河岛上有同一件事的通知卡、音乐、耳机卡),
-     * [KEY_SPENT] 只亮一下、已经亮完的,[KEY_ALWAYS] 一律藏起的(充电胶囊、电池提示);
-     * [KEY_ACTIVE] 星河岛开着且在管事,[KEY_YIELD_ALLOWED] 星河岛此刻能露面。同步答复 [KEY_CONFIRMED] 为完成显示交接的事件。
-     * 星河岛不再收下已连着的接入件时(机主停止了本机测试),先报一次什么都不接手、不在管事,系统胶囊全部交还系统。
+     * 星河岛的情况,变了就报一次:[KEY_ACTIVE] 星河岛开着且在管事,[KEY_YIELD_ALLOWED] 星河岛此刻能露面(不是熄屏,也不是锁屏时
+     * 关了锁屏显示),[KEY_SPENT] 只亮一下、已经在星河岛上亮完的事件身份。接入件据此决定系统自己的流体云藏不藏,不回答复。
+     * 星河岛不再收下已连着的接入件时(机主停止了本机测试),报一次不在管事、不带 [KEY_SPENT],系统胶囊全部交还系统。
      */
     const val OP_STATE = "state"
-    const val KEY_HANDLED = "handled"
     const val KEY_SPENT = "spent"
-    const val KEY_ALWAYS = "always"
     const val KEY_ACTIVE = "active"
     const val KEY_YIELD_ALLOWED = "yieldAllowed"
     /** 点按钮或卡片:[KEY_IDENTITY]、[KEY_ACTION](按钮编号,点卡片时不填);回 [KEY_DONE] */
