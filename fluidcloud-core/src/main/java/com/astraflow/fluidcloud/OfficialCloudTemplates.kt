@@ -76,7 +76,8 @@ class CloudTemplate(
     private fun pageNode(item: Tree, scope: Map<String, String>, image: (String, Map<String, String>, String) -> EventImage?): PageNode? {
         val node = item.node
         if (node.shown != null && !OfficialCloudExpr.truthy(OfficialCloudExpr.value(node.shown, scope, strings))) return null
-        node.attrs["show"]?.let { if (!OfficialCloudExpr.truthy(OfficialCloudExpr.value(it, scope, strings))) return null }
+        // 写在属性里的显示条件 show 与 shown 同义(官方卡片引擎 o1.E 把两者都当成显示与否)
+        for (key in SHOW_ATTRS) node.attrs[key]?.let { if (!OfficialCloudExpr.truthy(OfficialCloudExpr.value(it, scope, strings))) return null }
         val attrs = LinkedHashMap<String, String>()
         for ((name, raw) in node.attrs) {
             val value = OfficialCloudExpr.text(raw, scope, strings) ?: continue
@@ -195,6 +196,8 @@ class CloudTemplate(
         const val TYPE_MESSAGE = "message"
         const val TYPE_DEEPLINK = "deeplink"
         private const val CARD = "card-template"
+        /** 写在属性里的显示条件 */
+        private val SHOW_ATTRS = listOf("show", "shown")
         private val RESOURCE = Regex("""\${'$'}r\('([^']+)'\)""")
         /** 还没翻译的代号:$t('strings.xxx') 或 $t("strings.xxx") */
         private val KEY = Regex("""\${'$'}t\(\s*(['"])(.+?)\1\s*\)""")

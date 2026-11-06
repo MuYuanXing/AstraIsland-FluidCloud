@@ -45,8 +45,9 @@ object OfficialCloudImages {
         // 共享位置里的照片(例如外卖的菜品图):后台读好才有;同一个地址当成同一张图,不因为重新送来就交叉淡换
         // (现行规则「展开卡片总表」)
         image.shared?.let { uri ->
-            return OfficialCloudSharedImages.bitmap(image)?.let { EventImage.Picture(it, "shared:$uri", image.symbol, appShared = true, substitute = image.substitute) }
-                ?: EventImage.Missing(image.symbol, appShared = true, substitute = image.substitute)
+            val appShared = uri.startsWith("content://", ignoreCase = true)
+            return OfficialCloudSharedImages.bitmap(image)?.let { EventImage.Picture(it, "shared:$uri", image.symbol, appShared = appShared, substitute = image.substitute) }
+                ?: EventImage.Missing(image.symbol, appShared = appShared, substitute = image.substitute)
         }
         synchronized(resolved) { resolved[image]?.let { return it } }
         return decode(image)?.also { ref -> synchronized(resolved) { resolved[image] = ref } }

@@ -19,6 +19,9 @@ import java.util.concurrent.Executors
  */
 object OfficialCloudSharedImages {
     private const val TAG = "OfficialCloud"
+    /** 写在卡片数据里、指向承载应用自己图片资源的前缀(官方卡片引擎同一写法) */
+    private const val DRAWABLE = "@drawable/"
+    private const val RESOURCE_SCHEME = "android.resource"
     private const val MAX_BYTES = 4 * 1024 * 1024
     /** 卡片左边身份图最大 44,按 4 倍屏幕留够清晰度 */
     private const val MAX_EDGE = 256
@@ -51,6 +54,17 @@ object OfficialCloudSharedImages {
         return CloudImage(key = value, symbol = symbol, shared = value, owners = owners)
     }
 
+    /**
+     * 卡片数据里写成「@drawable/名字」的图:和官方卡片引擎一样(seedlingsdk z5/a.g、l),从承载这张卡片的应用 [host]
+     * 自己的图片资源里按名字读(例如智慧文本服务的链接卡片 @drawable/ic_def_card)。不是这种写法时返回 null。
+     */
+    fun hostDrawable(ref: String, host: String, symbol: Boolean = false): CloudImage? {
+        val value = ref.trim()
+        if (!value.startsWith(DRAWABLE) || value.length == DRAWABLE.length || host.isBlank()) return null
+        // 记成 android.resource://应用/drawable/名字:不同应用里同名的图各是各的
+        return CloudImage(key = value, symbol = symbol, shared = "$RESOURCE_SCHEME://$host/drawable/${value.removePrefix(DRAWABLE)}", owners = setOf(host))
+    }
+
     /** 已经读好的图;还没读时在后台读,读好后请星流重新排一次卡片。读不了的返回 null。 */
     fun bitmap(image: CloudImage): Bitmap? {
         val uri = image.shared ?: return null
@@ -73,6 +87,10 @@ object OfficialCloudSharedImages {
 
     private fun load(context: Context, value: String, owners: Set<String>): Bitmap? {
         val uri = Uri.parse(value)
+        if (uri.scheme == RESOURCE_SCHEME) {
+            val host = uri.authority?.takeIf { it in owners } ?: return null
+            return decode(drawableBytes(context, uri.lastPathSegment ?: return null, host) ?: return null)
+        }
         val authority = uri.authority ?: return null
         val provider = context.packageManager.resolveContentProvider(authority, 0)
         // 只读卡片所属应用自己的共享位置
@@ -91,6 +109,27 @@ object OfficialCloudSharedImages {
             }
             out.toByteArray()
         } ?: return null
+        return decode(bytes)
+    }
+
+    /** 承载卡片的应用 [host] 里名为 [name] 的图片资源原文(官方 z5/a 的 createPackageContext、getIdentifier、openRawResource) */
+    private fun drawableBytes(context: Context, name: String, host: String): ByteArray? {
+        val resources = context.createPackageContext(host, 0).resources
+        val id = resources.getIdentifier(name, "drawable", host).takeIf { it != 0 } ?: return null
+        return resources.openRawResource(id).use { input ->
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(16 * 1024)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                out.write(buffer, 0, n)
+                if (out.size() > MAX_BYTES) return null
+            }
+            out.toByteArray()
+        }
+    }
+
+    private fun decode(bytes: ByteArray): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth !in 1..16384 || bounds.outHeight !in 1..16384) return null
