@@ -37,8 +37,9 @@ object OfficialCloudSvg {
     private const val MAX_TILES = 64
     /** 按亮度的遮罩:颜色的亮度当透明度(白色全留、黑色不留) */
     private val LUMINANCE_TO_ALPHA = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0.2125f, 0.7154f, 0.0721f, 0f, 0f)
+    /** 不画的部分:定义类与说明类,以及嵌网页内容的 foreignObject(官方卡片用的绘图库同样跳过它,设计工具导出的背景模糊就写在这里) */
     private val SKIPPED = setOf("defs", "clipPath", "mask", "filter", "linearGradient", "radialGradient", "pattern", "symbol",
-        "title", "desc", "metadata", "style", "marker")
+        "title", "desc", "metadata", "style", "marker", "foreignObject")
     private val SHAPES = setOf("path", "rect", "circle", "ellipse", "line", "polygon", "polyline")
     private val SEPARATOR = Regex("""[\s,]+""")
     private val TRANSFORM = Regex("""(matrix|translate|scale|rotate)\s*\(([^)]*)\)""")
