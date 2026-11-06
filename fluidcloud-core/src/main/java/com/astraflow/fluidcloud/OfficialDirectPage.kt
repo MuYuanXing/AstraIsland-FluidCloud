@@ -36,9 +36,6 @@ internal object OfficialDirectPage {
     private const val CARD_EXTRA = "oplus.livealert.card"
     private const val CAPSULE_EXTRA = "oplus.livealert.capsule"
 
-    /** 指标样式的类名(d.java:34 Notification.MetricStyle) */
-    private const val METRIC_STYLE = "android.app.Notification\$MetricStyle"
-
     /** 系统流体云插件的颜色(res/values/colors.xml):card_content_title_color、card_content_text_color、mini_card_text_color */
     private val CARD_TITLE = 0xE6FFFFFF.toInt()
     private val CARD_TEXT = 0x8AFFFFFF.toInt()
@@ -313,8 +310,8 @@ internal object OfficialDirectPage {
         /**
          * 样式解析:d.java:12 a() 按附加信息 android.template 选样式——没写且通知没有自定义视图 contentView 是标准样式(u.java),
          * 没写而有 contentView 是自定义样式(g.java),安卓 16 起的 ProgressStyle 是进度按钮样式(t.java),BigTextStyle 是长文本
-         * 样式(a.java);CallStyle、MediaStyle、MetricStyle 官方交给各自的专用解析器(c.java、media/parse/f.java、q.java),
-         * 本文件不读,不出内容树;其余写法(NONE)官方没有对应解析器,按标准样式读(r.java:110)。
+         * 样式(a.java),安卓 17 起的 MetricStyle 是指标样式(q.java,[metricCard]);CallStyle、MediaStyle 官方交给各自的专用
+         * 解析器(c.java、media/parse/f.java),本文件不读,不出内容树;其余写法(NONE)官方没有对应解析器,按标准样式读(r.java:110)。
          * 每种样式照 v.java:14 d() 读胶囊 b()、卡片 c()、小卡 f();这四种样式的胶囊都是 s.java:616 的通用胶囊,不会为空,
          * 沉浸卡 e() 恒为空。
          */
@@ -333,7 +330,8 @@ internal object OfficialDirectPage {
                     standardCard(title, text) to standardMini(title, text)
                 }
                 template == Notification.MediaStyle::class.java.name -> return null
-                template == METRIC_STYLE -> return null
+                Build.VERSION.SDK_INT >= 37 && template == Notification.MetricStyle::class.java.name ->
+                    metricCard(metricStyle() ?: return null) to standardMini(null, null)
                 else -> standardCard(null, null) to standardMini(null, null)
             }
             return PageNode("card-template", attrs = mapOf("protocol" to "style"), children = listOf(styleCapsule(), card, mini))
@@ -366,7 +364,9 @@ internal object OfficialDirectPage {
 
         /**
          * 胶囊右边的字(s.java:719 i()),颜色是附加信息 oplus.shortCriticalTextColor(没有时 capsule_default_text_color)
-         * 提亮到亮度至少 0.6(b.java:373 M()),单行。先后:安卓 16 起的 shortCriticalText 不空时写它;when 不为 0 且
+         * 提亮到亮度至少 0.6(b.java:373 M()),单行。先后:安卓 16 起的 shortCriticalText 不空时写它;指标样式(q.java:346 i())
+         * 接着写重点指标(criticalMetric 在指标里的那一项,没有时第一项,见 [metricInto]),一项指标都没有时写 android.title;
+         * 其余样式 when 不为 0 且
          * android.showChronometer 时是计时(android.chronometerCountDown 定正倒);when 不为 0、android.showWhen 且离 when
          * 超过 1 分钟时是到 when 的倒计时(胶囊倒计时);否则写 android.title。
          */
@@ -374,9 +374,19 @@ internal object OfficialDirectPage {
             val notification = sbn.notification
             val whenMs = notification.`when`
             val critical = if (Build.VERSION.SDK_INT >= 36) notification.shortCriticalText.orEmpty() else ""
-            val attrs = linkedMapOf("textColor" to color(brighten(extras.getInt("oplus.shortCriticalTextColor", CAPSULE_TEXT))), "maxLine" to "1")
+            val ink = brighten(extras.getInt("oplus.shortCriticalTextColor", CAPSULE_TEXT))
+            val attrs = linkedMapOf("textColor" to color(ink), "maxLine" to "1")
+            val metricStyle = if (Build.VERSION.SDK_INT >= 37 && extras.getString("android.template") == Notification.MetricStyle::class.java.name)
+                metricStyle() else null
             when {
                 critical.isNotEmpty() -> attrs["value"] = critical
+                Build.VERSION.SDK_INT >= 37 && metricStyle != null -> {
+                    val metrics = metricStyle.metrics
+                    val index = metricStyle.criticalMetric?.let(metrics::indexOf)?.takeIf { it >= 0 } ?: 0
+                    val picked = metrics.getOrNull(index)
+                    if (picked != null) metricInto(attrs, picked, ink)
+                    else attrs["value"] = extras.getCharSequence("android.title")?.toString().orEmpty()
+                }
                 whenMs != 0L && extras.getBoolean("android.showChronometer") ->
                     timer(attrs, whenMs, extras.getBoolean("android.chronometerCountDown", false), chips = false)
                 whenMs != 0L && extras.getBoolean("android.showWhen") && whenMs - System.currentTimeMillis() > 60_000L ->
@@ -587,6 +597,125 @@ internal object OfficialDirectPage {
             return styleWhole(0, listOf(info(null, null, mini = false), appIconAssist(),
                 region("trailing", "PROGRESS_BUTTON_STYLE", null, listOfNotNull(progress, buttons))))
         }
+
+        /** 这条通知的指标样式(q.java:427 q():按通知重建 Builder 取样式);不是指标样式时为空 */
+        @RequiresApi(37)
+        private fun metricStyle(): Notification.MetricStyle? =
+            Notification.Builder.recoverBuilder(host, sbn.notification).style as? Notification.MetricStyle
+
+        /**
+         * 一项指标的值写进 [attrs](q.java:435 r()、E.java:19 a()):颜色是指标的语义色(semanticStyle 不为 0 时
+         * Notification.semanticStyleToColorRes 对应的颜色),否则 [ink];[size] 不为空时写字号。
+         * - 时间差 TimeDifference 给了 zeroTime、zeroElapsedRealtime、pausedDuration 之一时是计时(TimerModel):isTimer 为真是
+         *   倒计时,when 按开机时钟换算(f.java:594 n())。zeroTime 是这一刻;zeroElapsedRealtime 换成墙上时钟;pausedDuration
+         *   停住,倒计时 when = 现在 + 剩余、正计时 when = 现在 − 已过,停在读到这一刻。
+         * - 其余是文字:toValueString 的第一种写法(textVariants),单行。
+         */
+        @RequiresApi(37)
+        private fun metricInto(attrs: MutableMap<String, String>, metric: Notification.Metric, ink: Int, size: String? = null) {
+            val semantic = metric.semanticStyle
+            val shown = if (semantic == 0) ink else (Notification::class.java.getMethod("semanticStyleToColorRes", Int::class.javaPrimitiveType)
+                .invoke(null, semantic) as Int?)?.let(host::getColor) ?: ink
+            attrs["textColor"] = color(shown)
+            size?.let { attrs["textSize"] = it }
+            val value = metric.value
+            val now = System.currentTimeMillis()
+            val time = value as? Notification.Metric.TimeDifference
+            val zero = time?.let { difference ->
+                difference.zeroTime?.let { it.toEpochMilli() to true }
+                    ?: difference.zeroElapsedRealtime?.let { now - SystemClock.elapsedRealtime() + it to true }
+                    ?: difference.pausedDuration?.let { (if (difference.isTimer) now + it.toMillis() else now - it.toMillis()) to false }
+            }
+            if (time != null && zero != null) {
+                val countDown = time.isTimer
+                val (wall, started) = zero
+                attrs["when"] = (if (countDown) SystemClock.elapsedRealtime() + (wall - now) else wall).toString()
+                attrs["clock"] = if (countDown) "elapsed" else "wall"
+                attrs["countDown"] = countDown.toString()
+                attrs["started"] = started.toString()
+                if (!started) attrs["pausedAt"] = now.toString()
+                attrs["showMs"] = "false"
+            } else {
+                attrs["value"] = valueString(value).first.firstOrNull().orEmpty()
+                attrs["maxLine"] = "1"
+            }
+        }
+
+        /** 指标值的文字(Notification.Metric.MetricValue.toValueString,系统隐藏接口):各种写法 textVariants 与小字 subtext */
+        @RequiresApi(37)
+        private fun valueString(value: Notification.Metric.MetricValue): Pair<List<String>, String> {
+            val text = value.javaClass.getMethod("toValueString", Context::class.java).invoke(value, host)
+            val variants = (text.javaClass.getMethod("textVariants").invoke(text) as List<*>).map { it.toString() }
+            return variants to (text.javaClass.getMethod("subtext").invoke(text) as CharSequence?)?.toString().orEmpty()
+        }
+
+        /** 指标的名字(E.java:36):值带小字(单位等)时写成「名字 (小字)」(metric_label_unit「%1$s (%2$s)」),否则就是名字 */
+        @RequiresApi(37)
+        private fun metricLabel(metric: Notification.Metric): String {
+            val sub = valueString(metric.value).second
+            val label = metric.label?.toString().orEmpty()
+            return if (sub.isNotEmpty()) "$label ($sub)" else label
+        }
+
+        /** 一段单行字(TextModel 的 maxLines 1);[ink] 为空时用区段样式的颜色 */
+        private fun lineText(level: String, value: String, ink: Int?): PageNode =
+            PageNode("text", level, LinkedHashMap<String, String>().also { attrs ->
+                attrs["value"] = value
+                ink?.let { attrs["textColor"] = color(it) }
+                attrs["maxLine"] = "1"
+            })
+
+        /**
+         * 指标样式的卡片(q.java:317 c(),反编译漏掉的部分以原始指令为准);页面边距 8(media/parse/c.java:171
+         * notification_page_normal_padding)。应用图标是附加信息 oplus.substAppIcon(读得出时),否则来源应用的图标,圆角 4
+         * (card_app_icon_radius)。
+         * - 只有一项指标:中间信息区段 NORMAL_STYLE(居中)放 pic(应用图标 42×42,call_card_template_large_icon_size)、
+         *   title(android.title,有就写,单行)、content(指标名字 [metricLabel],单行);右边辅助区段 SINGLE_MODULE_STYLE(居中)的
+         *   labelModule 是指标的值,字号 20(text_large_size),颜色 card_content_title_color(有语义色时用语义色)。
+         * - 两项以上:顶部区段 NORMAL_STYLE 放 pic(应用图标 14×14,call_card_template_app_icon_size)和 title(android.title,
+         *   不空才有,card_content_title_color,单行);中间信息区段 INFOS_STYLE(居中)——两项时左、右两栏,三项时左、中、右三栏,
+         *   每栏 title* 是指标名字(card_content_title_color,单行),content* 是指标的值(card_content_text_color,有语义色时用
+         *   语义色);四项以上官方这一区段是空的。
+         * - 底部按钮列表区段(居中;通知按钮最多 3 个、等分,s.java:689 h()),有按钮才有。
+         */
+        @RequiresApi(37)
+        private fun metricCard(style: Notification.MetricStyle): PageNode {
+            val metrics = style.metrics
+            val many = metrics.size > 1
+            val icon = extras.getParcelable("oplus.substAppIcon", Icon::class.java)?.takeIf { it.loadDrawable(host) != null }
+                ?: Icon.createWithResource(sbn.packageName, host.packageManager.getApplicationInfo(sbn.packageName, 0).icon)
+            val iconSize = if (many) "14" else "42"
+            val pic = PageNode("image", "pic", mapOf("width" to iconSize, "height" to iconSize, "radius" to "4"),
+                images = mapOf("src" to EventImage.Platform(icon)))
+            val title = extras.getCharSequence("android.title")?.toString()
+            val buttons = actionButtons("card.extension.button").takeIf { it.isNotEmpty() }?.let { buttonRegion("trailing", it, "eqd") }
+            if (!many) {
+                val metric = metrics.first()
+                val value = PageNode("label", "labelModule", LinkedHashMap<String, String>().also { attrs ->
+                    attrs["labelType"] = "TEXT"
+                    metricInto(attrs, metric, CARD_TITLE, size = "20")
+                })
+                val info = region("center", "NORMAL_STYLE", null,
+                    listOfNotNull(pic, title?.let { lineText("title", it, null) }, lineText("content", metricLabel(metric), null)))
+                val assist = region("assist", "SINGLE_MODULE_STYLE", null, listOf(value))
+                return styleWhole(8, listOfNotNull(centered(info), centered(assist), buttons))
+            }
+            val header = region("leading", "NORMAL_STYLE", null,
+                listOfNotNull(pic, title?.takeIf { it.isNotEmpty() }?.let { lineText("title", it, CARD_TITLE) }))
+            val sides = when (metrics.size) {
+                2 -> listOf("Left", "Right")
+                3 -> listOf("Left", "Center", "Right")
+                else -> emptyList()
+            }
+            val info = region("center", "INFOS_STYLE", null, sides.flatMapIndexed { index, side ->
+                listOf(lineText("title$side", metricLabel(metrics[index]), CARD_TITLE),
+                    PageNode("text", "content$side", LinkedHashMap<String, String>().also { metricInto(it, metrics[index], CARD_TEXT) }))
+            })
+            return styleWhole(8, listOfNotNull(header, centered(info), buttons))
+        }
+
+        /** 区段居中(LayoutAlign CENTER) */
+        private fun centered(region: PageNode): PageNode = region.copy(attrs = region.attrs + ("gravity" to "CENTER"))
 
         /**
          * 小卡(u.java:92 f() 等):中间是按小卡读的信息区段([info] mini);辅助区段是锁屏小卡按钮(s.java:754 j())——
