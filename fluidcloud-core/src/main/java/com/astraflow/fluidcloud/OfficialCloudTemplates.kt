@@ -203,7 +203,7 @@ class CloudTemplate(
         private val KEY = Regex("""\${'$'}t\(\s*(['"])(.+?)\1\s*\)""")
         /** 写的是图片的属性(模板里的图片地址、资源代号或应用共享位置的地址) */
         val PAGE_IMAGES = setOf("src", "alt", "aodStaticImage", "icon", "iconOn", "iconOff", "iconDisable", "transitionOn", "transitionOff",
-            "lottieIcon", "bgImage", "background")
+            "lottieIcon", "bgImage", "background", "progressIcon")
         /** 从模板文件内容建模板;[dir] 是模板所在目录(找图片用),[strings] 是当前语言的文字表。 */
         fun parse(json: String, strings: Map<String, String> = emptyMap(), dir: File? = null,
                   resources: Map<String, Map<String, String>> = emptyMap()): CloudTemplate? = runCatching {
