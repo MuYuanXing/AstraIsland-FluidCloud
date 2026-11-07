@@ -51,6 +51,7 @@ object OfficialCloudSource {
              reportIsland: (String) -> Unit = {}) {
         check(Looper.myLooper() == Looper.getMainLooper())
         this.context = context
+        OfficialCloudEngine.bind(context)
         this.settings = settings
         this.reportStatus = reportStatus
         if (actions == null) actions = OfficialCloudActions(context)

@@ -102,7 +102,7 @@ class CloudTemplate(
                 image(node.type, attrs, value)?.let { images["nodeIcons[$i]"] = it }
             }
         }
-        return PageNode(node.type, node.level, attrs, item.children.mapNotNull { pageNode(it, scope, image) }, images,
+        return PageNode(node.type, node.level, OfficialCloudEngine.attrs(attrs), item.children.mapNotNull { pageNode(it, scope, image) }, images,
             node.events.filterValues { it in actions })
     }
 
@@ -204,12 +204,30 @@ class CloudTemplate(
         /** 写的是图片的属性(模板里的图片地址、资源代号或应用共享位置的地址) */
         val PAGE_IMAGES = setOf("src", "alt", "aodStaticImage", "icon", "iconOn", "iconOff", "iconDisable", "transitionOn", "transitionOff",
             "lottieIcon", "bgImage", "background", "progressIcon")
+        /** 官方 md.R:层级里有冒号的取到冒号为止(-1:template、-2:swiper 原样),没有的去掉末尾的 *;没写层级为空 */
+        private fun levelKey(level: String): String? = when {
+            level.isEmpty() -> null
+            !level.contains(':') || level == "-1:template" || level == "-2:swiper" -> if (level.endsWith("*") && level.length > 1) level.dropLast(1) else level
+            else -> level.substring(0, level.indexOf(':') + 1)
+        }
         /** 从模板文件内容建模板;[dir] 是模板所在目录(找图片用),[strings] 是当前语言的文字表。 */
         fun parse(json: String, strings: Map<String, String> = emptyMap(), dir: File? = null,
                   resources: Map<String, Map<String, String>> = emptyMap()): CloudTemplate? = runCatching {
             val root = JSONObject(json)
             var count = 0
             var cardClick: String? = null
+            val actions = root.optJSONObject("actions")?.let { a -> a.keys().asSequence().mapNotNull { k ->
+                val ways = when (val value = a.opt(k)) {
+                    is JSONObject -> listOf(value)
+                    is JSONArray -> (0 until value.length()).mapNotNull { value.optJSONObject(it) }
+                    else -> emptyList()
+                }
+                ways.takeIf { it.isNotEmpty() }?.let { k to it }
+            }.toMap() }.orEmpty()
+            // 官方卡片引擎(seedlingsdk v6/z3.l1 与 z3.b.C)把元素的事件按层级(md.R 化简后)登记,同一层级同一事件后登记的为准,
+            // 显示条件不成立的元素也登记;按下时按元素的层级取动作(z3.b.B)。秒表计时中的暂停、计次按钮自己不写事件,
+            // 用的是同层级的开始、取消按钮登记的动作
+            val levelEvents = HashMap<String, LinkedHashMap<String, String>>()
             fun build(value: Any?, depth: Int): List<Tree> {
                 if (depth > 40 || count > 2048) return emptyList()
                 return when (value) {
@@ -221,20 +239,18 @@ class CloudTemplate(
                         if (type == CARD && cardClick == null && "notification" in attrs["entry"].orEmpty().split(",").map(String::trim)) cardClick = events["click"]
                         val node = Node(type, attrs["level"].orEmpty(), attrs, events, value.optString("shown", "").takeIf { it.isNotEmpty() })
                         count++
-                        listOf(Tree(node, build(value.opt("children"), depth + 1)))
+                        val children = build(value.opt("children"), depth + 1)
+                        levelKey(node.level)?.let { key -> events.filterValues { it in actions }.forEach { (event, action) -> levelEvents.getOrPut(key, ::LinkedHashMap)[event] = action } }
+                        listOf(Tree(node, children))
                     }
                     else -> emptyList()
                 }
             }
-            val tree = build(root.opt("template"), 0)
-            val actions = root.optJSONObject("actions")?.let { a -> a.keys().asSequence().mapNotNull { k ->
-                val ways = when (val value = a.opt(k)) {
-                    is JSONObject -> listOf(value)
-                    is JSONArray -> (0 until value.length()).mapNotNull { value.optJSONObject(it) }
-                    else -> emptyList()
-                }
-                ways.takeIf { it.isNotEmpty() }?.let { k to it }
-            }.toMap() }.orEmpty()
+            fun resolve(item: Tree): Tree = item.node.let { node ->
+                val events = levelKey(node.level)?.let { levelEvents[it].orEmpty() } ?: node.events
+                Tree(Node(node.type, node.level, node.attrs, events, node.shown), item.children.map(::resolve))
+            }
+            val tree = build(root.opt("template"), 0).map(::resolve)
             val defaults = root.optJSONObject("data")?.let(::flatten).orEmpty()
             CloudTemplate(actions, defaults, strings, dir, cardClick, tree, resources)
         }.getOrNull()
