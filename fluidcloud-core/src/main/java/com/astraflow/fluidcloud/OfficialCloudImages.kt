@@ -64,7 +64,9 @@ object OfficialCloudImages {
         image.platform?.let { return EventImage.Platform(it, symbol, substitute = substitute) }
         if (image.animated) {
             val bytes = image.bytes?.takeIf { it.isNotEmpty() } ?: return null
-            return EventImage.Animation(image.key, image.playing, bytes, symbol, substitute = substitute,
+            // 按文件内容认动画(官方 e2.A 比较动画数据,同一份数据不重播):同一份文件经不同来路送来(系统给的图、模板里的文件)
+            // 编号不同也是同一个动画,星河岛不当成换了图从头再播
+            return EventImage.Animation("lottie:${bytes.size}:${bytes.contentHashCode()}", image.playing, bytes, symbol, substitute = substitute,
                 loopStartFrame = image.loopStartFrame, loop = image.loop)
         }
         image.bitmap?.takeUnless { it.isRecycled }?.let { original ->
