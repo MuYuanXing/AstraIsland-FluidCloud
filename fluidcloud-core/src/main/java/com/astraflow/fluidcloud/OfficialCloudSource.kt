@@ -38,8 +38,11 @@ object OfficialCloudSource {
 
     /** 检查用:直接告诉它星河岛在不在管事 */
     fun islandActiveForTest(active: Boolean) { islandActive = active }
+    /** 检查用:直接告诉它星河岛此刻能不能露面 */
+    fun yieldAllowedForTest(allowed: Boolean) { yieldAllowed = allowed }
     /** 星河岛此刻能露面(不是熄屏,也不是锁屏时关了锁屏显示) */
-    @Volatile private var yieldAllowed = false
+    @Volatile var yieldAllowed = false
+        private set
     /** 星河岛已经亮完的只亮一下的提示(事件身份) */
     @Volatile private var spentIdentities: Set<String> = emptySet()
 
@@ -85,7 +88,12 @@ object OfficialCloudSource {
     /** 把「系统胶囊能不能让位」报给插件页面;还没定下来时也报,页面不沿用上一次开机留下的结果 */
     fun reportVisibility() {
         val status = OfficialCloudYield.status
-        main.post { reportStatus(status.report) }
+        // 显示出口装上就由出口藏;装不上时(ColorOS 15)源头拦截装上也藏得住系统服务卡片。
+        // 通知变成的胶囊只有显示出口藏得住,读得了这一类的机器必须显示出口装上,才不会有同一件事出现两次。
+        val gateCovers = OfficialCloudGate.installed && !OfficialCloudHook.hasNotificationListeners()
+        val report = if (status == OfficialCloudYield.Status.AVAILABLE || gateCovers) OfficialCloudYield.Status.AVAILABLE.report
+            else status.report
+        main.post { reportStatus(report) }
     }
 
     /** 一个来源送来的一批记录(参数列表先复制,回到主线程再读) */
@@ -119,14 +127,16 @@ object OfficialCloudSource {
      */
     fun hides(nativeKey: String): Boolean {
         if (!settings.access || !islandActive || !AdapterBridge.connected() || !kindAllowed(nativeKey)) return false
+        // 读不出内容树的记录交还系统显示:藏起系统那份而星河岛又画不出来,用户就什么都看不到
+        if (nativeKey in unreadableKeys) return false
         if (yieldAllowed) return true
         val record = store.record(nativeKey) ?: return false
         val kind = OfficialCloudServices.kind(record)
         return kind == EventKind.CHARGING || kind == EventKind.BATTERY_TIP || record.key in spentIdentities
     }
 
-    /** 认不出身份的状态栏记录藏不藏:星河岛能露面时和别的记录一样藏 */
-    fun hidesUnknown(): Boolean = settings.access && islandActive && AdapterBridge.connected() && yieldAllowed
+    /** 读到了却整理不出官方内容树、星河岛画不出来的记录(事件身份);这几条不藏,交还系统 */
+    @Volatile private var unreadableKeys: Set<String> = emptySet()
 
     /** 这条系统记录已经从数据门读到了(出口就地读的不算) */
     fun known(nativeKey: String): Boolean = store.record(nativeKey, except = DISPLAY_EXIT) != null
@@ -233,6 +243,13 @@ object OfficialCloudSource {
             events += done.event
         }
         translated.keys.retainAll(live)
+        // 读到了却整理不出内容树的记录交还系统;还没读到的照旧藏(读到后再按结果定)
+        val unreadable = live - translated.keys
+        if (unreadable != unreadableKeys) {
+            unreadableKeys = unreadable
+            // 能不能藏变了:请系统按现在的条件重算状态栏那一份
+            main.post { OfficialCloudYield.refresh() }
+        }
         actions?.retain(store.active().mapTo(HashSet()) { it.key })
         AdapterBridge.push(events, settings, store.aliveIdentities())
     }
@@ -287,6 +304,8 @@ object OfficialCloudSource {
         islandActive = active
         yieldAllowed = shown
         spentIdentities = spent
+        // 星河岛不再接手或不再能露面:源头拦截不再截,把截住的那一份交还系统(现行规则「系统事件接入」)
+        OfficialCloudGate.onGateStateChanged()
         OfficialCloudYield.refresh()
     }
 

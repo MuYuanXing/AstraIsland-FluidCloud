@@ -26,7 +26,17 @@ object OfficialRemotePage {
 
     /** 读到的界面与点按:[capsule] 胶囊,[card] 展开大卡;[clicks] 动作名 → 登记的做法 */
     class Views(val capsule: RemoteViews?, val card: RemoteViews?, val clicks: Map<String, CloudAction>, val capsuleClicks: List<Pair<Int, String>>,
-                val cardClicks: List<Pair<Int, String>>)
+                val cardClicks: List<Pair<Int, String>>,
+                /** 这一份只是变化的部分:照官方叠在已有界面上,不整份重铺 */
+                val reapply: Boolean = false,
+                /** 铺好界面后逐个控件调用的方法(官方 widgetActionItems) */
+                val widgetActions: List<WidgetAction> = emptyList())
+
+    /** 官方 WidgetActionItem:对编号 [viewId] 的控件调用 [widget] 类上的 [methods] */
+    class WidgetAction(val viewId: Int, val widget: String, val methods: List<WidgetMethod>)
+
+    /** 官方 Method:方法名与按 JSON 读到的参数(数字为 Double,布尔为 Boolean,文字为 String) */
+    class WidgetMethod(val method: String, val params: List<Any?>)
 
     /** 卡片数据(提供方送来的那一份)里的界面与点按 */
     fun read(raw: ByteArray): Views {
@@ -46,7 +56,26 @@ object OfficialRemotePage {
             }
         }
         return Views(views(setting.optJSONArray("remoteViewByteArray")), views(setting.optJSONArray("panelRemoteViewByteArray")),
-            clicks, register("clickList", "capsule"), register("panelClickList", "card"))
+            clicks, register("clickList", "capsule"), register("panelClickList", "card"),
+            reapply = setting.optBoolean("isReapply"), widgetActions = widgetActions(setting.optJSONArray("widgetActionItems")))
+    }
+
+    /** 官方的控件动作表(RemoteViewSetting.widgetActionItems):编号、控件类、方法名与参数 */
+    private fun widgetActions(items: JSONArray?): List<WidgetAction> {
+        if (items == null) return emptyList()
+        return (0 until items.length()).mapNotNull { index ->
+            val item = items.optJSONObject(index) ?: return@mapNotNull null
+            val methods = item.optJSONArray("methods")?.let { list ->
+                (0 until list.length()).mapNotNull { at ->
+                    val method = list.optJSONObject(at) ?: return@mapNotNull null
+                    val params = method.optJSONArray("params")?.let { values ->
+                        (0 until values.length()).map { values.get(it) }
+                    }.orEmpty()
+                    WidgetMethod(method.optString("method"), params)
+                }
+            }.orEmpty()
+            WidgetAction(item.optInt("viewId", -1), item.optString("widgetFullClassName"), methods)
+        }
     }
 
     /** 官方 l():字节还原成界面 */
@@ -71,13 +100,30 @@ object OfficialRemotePage {
 
     /**
      * 交给星河岛的内容树:根是 card-template,category 写 remote;界面本身随事件另交。点按登记写成 click 元素,
-     * level 是控件编号,events 的 click 是动作名;胶囊的写在 compact 下,展开的写在 expanded 下。
+     * level 是控件编号,events 的 click 是动作名;控件动作表写成 widget 元素。整张卡片的点击照官方执行点按清单的第一项。
+     * 这一份只是变化的部分时([Views.reapply])根上写 reapply,星河岛照官方叠在已有界面上。
      */
     fun page(views: Views): PageNode {
         fun clicks(list: List<Pair<Int, String>>) = list.map { (viewId, name) -> PageNode("click", viewId.toString(), events = mapOf("click" to name)) }
-        return PageNode("card-template", attrs = mapOf("category" to "remote"), children = listOf(
-            PageNode("compact", children = clicks(views.capsuleClicks)),
-            PageNode("expanded", children = clicks(views.cardClicks)),
-        ))
+        fun widgets(list: List<WidgetAction>) = list.flatMap { action ->
+            action.methods.filter { it.method.isNotEmpty() }.map { method ->
+                PageNode("widget", action.viewId.toString(), attrs = mapOf(
+                    "widget" to action.widget,
+                    "method" to method.method,
+                    "params" to org.json.JSONArray(method.params).toString(),
+                ))
+            }
+        }
+        val press = views.cardClicks.firstOrNull()?.second ?: views.capsuleClicks.firstOrNull()?.second
+        val attrs = linkedMapOf("category" to "remote")
+        if (views.reapply) attrs["reapply"] = "true"
+        if (views.card != null) attrs["panel"] = "true"
+        return PageNode("card-template",
+            attrs = attrs,
+            events = if (press != null) mapOf("click" to press) else emptyMap(),
+            children = listOf(
+                PageNode("compact", children = clicks(views.capsuleClicks) + widgets(views.widgetActions)),
+                PageNode("expanded", children = clicks(views.cardClicks) + widgets(views.widgetActions)),
+            ))
     }
 }

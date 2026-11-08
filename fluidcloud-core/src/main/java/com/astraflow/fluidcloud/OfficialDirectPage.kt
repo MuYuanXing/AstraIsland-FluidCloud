@@ -32,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap
  * card_modular_* 区域排法。区域的 category 写官方区段样式名,元素的 level 写官方区段里的槽位名(pic、title、
  * titleLeft、buttonList……)。
  */
-internal object OfficialDirectPage {
+object OfficialDirectPage {
     private const val CARD_EXTRA = "oplus.livealert.card"
     private const val CAPSULE_EXTRA = "oplus.livealert.capsule"
 
@@ -66,7 +66,9 @@ internal object OfficialDirectPage {
      */
     fun build(sbn: StatusBarNotification): PageNode? {
         val card = sbn.notification.extras.getString(CARD_EXTRA)
-        val custom = if (card.isNullOrEmpty()) null else Reader(sbn).let { reader -> reader.customUi(JSONObject(card))?.let { reader to it } }
+        // 自定义界面解析抛错时官方整条改走样式解析(C16 p6/q.java:76-96)
+        val custom = if (card.isNullOrEmpty()) null
+            else runCatching { Reader(sbn).let { reader -> reader.customUi(JSONObject(card))?.let { reader to it } } }.getOrNull()
         val (reader, page) = custom ?: Reader(sbn).let { reader -> reader to (reader.style() ?: return null) }
         registered[sbn.key] = reader.targets
         return page
@@ -104,7 +106,7 @@ internal object OfficialDirectPage {
          */
         fun customUi(card: JSONObject): PageNode? {
             val capsule = capsule(card) ?: return null
-            val expanded = card(card)
+            val expanded = card(card) ?: return null
             val mini = miniCard(card) ?: return null
             return PageNode("card-template", attrs = mapOf("protocol" to "customUi"), children = listOf(capsule, expanded, mini))
         }
@@ -165,12 +167,19 @@ internal object OfficialDirectPage {
         // ---------------- 卡片(n.java:339 起) ----------------
 
         /**
-         * 卡片:headerData(顶部,官方区域 HEAD)、primaryData(中间,INFO)、subData(底部,ASSIST),外加整张卡片的 attr。
+         * 卡片:headerData(顶部,官方区域 HEAD)、primaryData(中间,INFO)、subData(辅助区 ASSIST)、divider(分隔区 EXTENSION)、
+         * extensionData(底部扩展区 EXTENSION),外加整张卡片的 attr(n.java:497-503、C16 p6/m.java:328-334、575)。
          * 区段样式照官方:顶部 t_sym → SYMMETRY_STYLE(j.java n())、t_sym_action → IMAGE_TEXT_STYLE(j.java m())、
-         * t_custom → CUSTOM_STYLE(j.java l());底部 t_actions → BUTTON_LIST_STYLE(j.java k())、t_custom → CUSTOM_STYLE、
-         * t_component → SINGLE_MODULE_STYLE(n.java:553-597);中间 t_textinfos → INFOS_STYLE(n.java:641-709)。
+         * t_custom → CUSTOM_STYLE(j.java l());中间 t_textinfos → INFOS_STYLE、t_standard → NORMAL_STYLE、
+         * t_custom → CUSTOM_STYLE;辅助 t_actions → BUTTON_LIST_STYLE、t_custom → CUSTOM_STYLE、t_component → SINGLE_MODULE_STYLE;
+         * 分隔区 DIVIDER_STYLE;扩展 t_sym → SYMMETRY_STYLE、t_custom → CUSTOM_STYLE、t_actions → BUTTON_LIST_STYLE、
+         * t_progress → PROGRESS_STYLE。
          */
-        private fun card(card: JSONObject): PageNode {
+        private fun card(card: JSONObject): PageNode? {
+            val subData = card.optJSONObject("subData")
+            val subButtons = subData?.takeIf { it.optString("type") == "t_actions" }?.let { actions -> buttons(actions, "btns", "buttonList", "card.sub.button") }
+            // 底部有三个以上按钮时官方中间信息区段不放图(n.java:601-620)
+            val manyButtons = (subButtons?.children?.size ?: 0) >= 3
             val header = card.optJSONObject("headerData")?.let { data ->
                 when (data.optString("type")) {
                     "t_sym" -> symmetry(data, "leading", "card.header")
@@ -179,22 +188,163 @@ internal object OfficialDirectPage {
                     else -> null
                 }
             }
-            val primary = card.optJSONObject("primaryData")?.let { data ->
+            val primaryData = card.optJSONObject("primaryData")
+            val primary = primaryData?.let { data ->
                 when (data.optString("type")) {
                     "t_textinfos" -> infos(data, "center", "card.primary")
-                    else -> null
+                    "t_standard" -> standard(data, "center", "card.primary", manyButtons)
+                    "t_custom" -> custom(data, "center")
+                    else -> return null
                 }
             }
-            val sub = card.optJSONObject("subData")?.let { data ->
+            val sub = subData?.let { data ->
                 when (data.optString("type")) {
-                    "t_actions" -> region("trailing", "BUTTON_LIST_STYLE", data.optJSONObject("attr"),
-                        listOfNotNull(buttons(data, "btns", "buttonList", "card.sub.button")))
-                    "t_custom" -> custom(data, "trailing")
-                    "t_component" -> component(data, "trailing", "card.sub")
+                    "t_actions" -> region("assist", "BUTTON_LIST_STYLE", data.optJSONObject("attr"),
+                        listOfNotNull(subButtons))
+                    "t_custom" -> custom(data, "assist")
+                    "t_component" -> component(data, "assist", "card.sub")
                     else -> null
                 }
             }
-            return whole("expanded", card.optJSONObject("attr"), "card", listOfNotNull(header, primary, sub))
+            val divider = card.optJSONObject("divider")?.let { data -> divider(data) ?: return null }
+            val extension = card.optJSONObject("extensionData")?.let { data ->
+                when (data.optString("type")) {
+                    "t_sym" -> symmetry(data, "trailing", "card.extension")
+                    "t_custom" -> custom(data, "trailing")
+                    "t_actions" -> region("trailing", "BUTTON_LIST_STYLE", data.optJSONObject("attr"),
+                        listOfNotNull(buttons(data, "btns", "buttonList", "card.extension.button")))
+                    "t_progress" -> progressSection(data, "trailing", "card.extension")
+                    else -> null
+                }
+            }
+            return whole("expanded", card.optJSONObject("attr"), "card",
+                listOfNotNull(header, primary, sub, divider, extension))
+        }
+
+        /**
+         * 标准信息区段 NORMAL_STYLE(官方 CustomUICardConverter, n.java:1129-1257、C16 p6/m.java:799-943):
+         * title(没有时整张卡解析失败)、subTitle 放 titleLabel、labels 第一组放 contentLabel/content、第二组放
+         * subContentLabel/subContent;底部按钮少于三个时 icon 放 pic。
+         */
+        private fun standard(data: JSONObject, region: String, prefix: String, hidePic: Boolean): PageNode? {
+            val title = data.optJSONObject("title") ?: return null
+            val children = mutableListOf<PageNode>()
+            if (!hidePic) data.optJSONObject("icon")?.let { picture(it, "pic", "$prefix.pic") }?.let(children::add)
+            children += text(title, "title", "$prefix.title")
+            data.optJSONObject("subTitle")?.let { label(it, "titleLabel", "$prefix.titleLabel") }?.let(children::add)
+            val groups = data.optJSONArray("labels")
+            if (groups != null && groups.length() in 1..2) {
+                standardLabels(groups.optJSONArray(0), "content", children, prefix)
+                if (groups.length() == 2) standardLabels(groups.optJSONArray(1), "subContent", children, prefix)
+            }
+            return region(region, "NORMAL_STYLE", data.optJSONObject("attr"), children)
+        }
+
+        /** 一组标签:一项时直接是正文,两项时前一项是标签、后一项是正文;其他项数官方不画(n.java:1194-1240) */
+        private fun standardLabels(labels: JSONArray?, slot: String, into: MutableList<PageNode>, prefix: String) {
+            if (labels == null || labels.length() !in 1..2) return
+            if (labels.length() == 2) labels.optJSONObject(0)?.let { label(it, "${slot}Label", "$prefix.${slot}Label") }?.let(into::add)
+            labels.optJSONObject(labels.length() - 1)?.let { text(it, slot, "$prefix.$slot") }?.let(into::add)
+        }
+
+        /**
+         * 进度区段 PROGRESS_STYLE(官方 n.java:1010-1064、C16 p6/m.java:683-733):icon 放 pic、title 放 title、
+         * labels 第一项放 content、第二项放 subContent,progress 放进度条。
+         */
+        private fun progressSection(data: JSONObject, region: String, prefix: String): PageNode {
+            val children = mutableListOf<PageNode>()
+            data.optJSONObject("icon")?.let { picture(it, "pic", "$prefix.pic") }?.let(children::add)
+            data.optJSONObject("title")?.let { text(it, "title", "$prefix.title") }?.let(children::add)
+            val labels = data.optJSONArray("labels")
+            if (labels != null && labels.length() in 1..2) {
+                labels.optJSONObject(0)?.let { text(it, "content", "$prefix.content") }?.let(children::add)
+                if (labels.length() == 2) labels.optJSONObject(1)?.let { text(it, "subContent", "$prefix.subContent") }?.let(children::add)
+            }
+            data.optJSONObject("progress")?.let { children += progress(it) }
+            return region(region, "PROGRESS_STYLE", data.optJSONObject("attr"), children)
+        }
+
+        /**
+         * 分隔区 DIVIDER_STYLE(官方 n.java:711-964、1265-1400;C16 p6/m.java:575-640、956-1045):
+         * type 为 NORMAL、DASHED、PIC、PROGRESS、DOTTED、DOTTED_SMALL 或 1..5;src 图、color、bgColor、size、
+         * desc、labels/lables 最多四项(labelPos: SYD 等分,其余默认)。dotDiameter 没写时点线为 4/小点线为 3。
+         */
+        private fun divider(data: JSONObject): PageNode? {
+            val rawType = data.optString("type").uppercase(Locale.ROOT)
+            val type = when (rawType) {
+                "1", "DASHED" -> "DASHED"
+                "2", "PIC" -> "PIC"
+                "3", "PROGRESS" -> "PROGRESS"
+                "4", "DOTTED" -> "DOTTED"
+                "5", "DOTTED_SMALL" -> "DOTTED_SMALL"
+                else -> "NORMAL"
+            }
+            val size = data.optString("size", "1").trim().toFloatOrNull() ?: return null
+            val dot = data.optString("dotDiameter").trim().toFloatOrNull()
+                ?: if (type == "DOTTED_SMALL") 3f else 4f
+            val attrs = linkedMapOf("dividerType" to type, "size" to size.toString(), "dotDiameter" to dot.toString())
+            data.optString("desc").takeIf { it.isNotEmpty() }?.let { attrs["desc"] = it }
+            attrs["labelsArr"] = if (data.optString("labelsArr").uppercase(Locale.ROOT) == "SYD") "SYD" else "DEF"
+            val images = LinkedHashMap<String, EventImage>()
+            data.optString("src").takeIf { it.isNotEmpty() }?.let { image(it) }?.let { images["src"] = it }
+            (resource(data.optString("color")) as? Int)?.let { attrs["color"] = color(it) }
+            (resource(data.optString("bgColor")) as? Int)?.let { attrs["bgColor"] = color(it) }
+            val children = mutableListOf<PageNode>()
+            val labels = data.optJSONArray("labels") ?: data.optJSONArray("lables")
+            if (labels != null) {
+                for (index in 0 until minOf(labels.length(), 4)) {
+                    labels.optJSONObject(index)?.let { text(it, "label$index", "divider.label$index") }?.let(children::add)
+                }
+            }
+            data.optJSONObject("progress")?.let { children += progress(it) }
+            val container = PageNode("divider-container", "dividerContainer", attrs, children, images)
+            return region("divider", "DIVIDER_STYLE", data.optJSONObject("attr"), listOf(container))
+        }
+
+        /**
+         * 进度条 ProgressModel(官方 h.java:1901-2029):trackIcon、trackPosition(TOP 否则 BOTTOM)、
+         * segList(length、color、label)、pointList(position、icon、color、label)、progress、size、label、
+         * styledByProgress、indeterminate、segSpace、lightEffect、desc。
+         */
+        private fun progress(data: JSONObject): PageNode {
+            val attrs = linkedMapOf(
+                "progress" to data.optInt("progress").toString(),
+                "progressSize" to data.optInt("size").toString(),
+                "trackPosition" to if (data.optString("trackPosition").uppercase(Locale.ROOT) == "TOP") "TOP" else "BOTTOM",
+                "styledByProgress" to data.optBoolean("styledByProgress").toString(),
+                "indeterminate" to data.optBoolean("indeterminate").toString(),
+                "segSpace" to data.optInt("segSpace", 0).toString(),
+            )
+            data.optString("desc").takeIf { it.isNotEmpty() }?.let { attrs["desc"] = it }
+            data.optString("lightEffect").takeIf { it.isNotEmpty() }?.let { attrs["lightEffect"] = it }
+            val images = LinkedHashMap<String, EventImage>()
+            data.optJSONObject("trackIcon")?.let { picture(JSONObject().put("icon", it), "trackIcon", "progress.trackIcon") }
+                ?.let { images["trackIcon"] = it.images["src"] ?: return@let }
+            val children = mutableListOf<PageNode>()
+            val segments = JSONArray()
+            data.optJSONArray("segList")?.let { list ->
+                for (index in 0 until list.length()) {
+                    val segment = list.optJSONObject(index) ?: continue
+                    val color = (resource(segment.optString("color")) as? Int)?.let(::color)
+                    segments.put(JSONObject().put("length", segment.optInt("length")).put("color", color.orEmpty()))
+                    segment.optJSONObject("label")?.let { text(it, "segmentLabel$index", "progress.segmentLabel$index") }?.let(children::add)
+                }
+            }
+            attrs["segments"] = segments.toString()
+            val points = JSONArray()
+            data.optJSONArray("pointList")?.let { list ->
+                for (index in 0 until list.length()) {
+                    val point = list.optJSONObject(index) ?: continue
+                    val color = (resource(point.optString("color")) as? Int)?.let(::color)
+                    points.put(JSONObject().put("position", point.optInt("position")).put("color", color.orEmpty()))
+                    point.optJSONObject("icon")?.let { picture(JSONObject().put("icon", it), "pointIcon$index", "progress.pointIcon$index") }
+                        ?.let { node -> node.images["src"]?.let { images["pointIcon$index"] = it } }
+                    point.optJSONObject("label")?.let { text(it, "pointLabel$index", "progress.pointLabel$index") }?.let(children::add)
+                }
+            }
+            attrs["points"] = points.toString()
+            data.optJSONObject("label")?.let { text(it, "label", "progress.label") }?.let(children::add)
+            return PageNode("progress", "progress", attrs, children, images)
         }
 
         /**
@@ -244,9 +394,12 @@ internal object OfficialDirectPage {
          * 应用自绘区段 CUSTOM_STYLE(j.java l()):rvId 指向附加信息里的 RemoteViews(资源写法 layout/名字),
          * 官方把它原样铺进区段(customModule);rvId 读不到时官方判解析失败。这里写明 rvId,内容由显示端按 RemoteViews 处理。
          */
-        private fun custom(data: JSONObject, region: String): PageNode =
-            region(region, "CUSTOM_STYLE", data.optJSONObject("attr"),
-                listOf(PageNode("remote-views", "customModule", mapOf("rvId" to data.optString("rvId")))))
+        private fun custom(data: JSONObject, region: String): PageNode? {
+            val rvId = data.optString("rvId")
+            if (resource(rvId) !is android.widget.RemoteViews) return null
+            return region(region, "CUSTOM_STYLE", data.optJSONObject("attr"),
+                listOf(PageNode("remote-views", "customModule", mapOf("rvId" to rvId, "package" to sbn.packageName))))
+        }
 
         /**
          * 单模块区段 SINGLE_MODULE_STYLE(n.java:553-597,底部 t_component):按顺序认 Icon(放图)、ProgressWidget(放进度图)、
@@ -322,19 +475,31 @@ internal object OfficialDirectPage {
                 template.isNullOrEmpty() && notification.contentView == null -> standardCard(null, null) to standardMini(null, null)
                 template.isNullOrEmpty() -> customCard() to standardMini(null, null)
                 Build.VERSION.SDK_INT >= 36 && template == Notification.ProgressStyle::class.java.name -> progressCard() to standardMini(null, null)
-                template == Notification.CallStyle::class.java.name -> return null
+                // C16 的专用解析器为空时退回标准样式(C16 p6/q.java:97);C17 不退回(r.java:117)
+                template == Notification.CallStyle::class.java.name ->
+                    if (Build.VERSION.SDK_INT < 37) standardCard(null, null) to standardMini(null, null) else return null
                 template == Notification.BigTextStyle::class.java.name -> {
                     // 长文本(a.java:103 q()):标题用 android.title.big(空时 android.title),正文用 android.bigText(空时 android.text)
                     val title = extras.getCharSequence("android.title.big")?.takeIf { it.isNotEmpty() } ?: extras.getCharSequence("android.title")
                     val text = extras.getCharSequence("android.bigText")?.takeIf { it.isNotEmpty() } ?: extras.getCharSequence("android.text")
                     standardCard(title, text) to standardMini(title, text)
                 }
-                template == Notification.MediaStyle::class.java.name -> return null
+                template == Notification.MediaStyle::class.java.name ->
+                    if (Build.VERSION.SDK_INT < 37) standardCard(null, null) to standardMini(null, null) else return null
                 Build.VERSION.SDK_INT >= 37 && template == Notification.MetricStyle::class.java.name ->
                     metricCard(metricStyle() ?: return null) to standardMini(null, null)
                 else -> standardCard(null, null) to standardMini(null, null)
             }
-            return PageNode("card-template", attrs = mapOf("protocol" to "style"), children = listOf(styleCapsule(), card, mini))
+            // 点整颗胶囊、整张卡:官方依次用通知自带的 contentIntent、fullScreenIntent、oplus.pinTaskInfo
+            //(C17 classic/origin/o.java:408-443);前两个这里能直接发送,pinTaskInfo 要系统界面自己的任务控制器,本文件读不到。
+            val pending = notification.contentIntent ?: notification.fullScreenIntent
+            val action = "notification.click"
+            val events = if (pending != null) {
+                targets[action] = Target(null, pending, null)
+                mapOf("click" to action)
+            } else emptyMap()
+            return PageNode("card-template", attrs = mapOf("protocol" to "style"), children = listOf(styleCapsule(), card, mini),
+                events = events)
         }
 
         /**

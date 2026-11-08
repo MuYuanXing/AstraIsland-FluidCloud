@@ -25,10 +25,17 @@ class CloudTemplate(
     private val dir: File?,
     val cardClick: String?,
     private val tree: List<Tree> = emptyList(),
-    /** 说明文件自带的资源表:类型(images、anim)→ 名字 → 文件路径;深色优先(现行规则「系统事件接入」) */
+    /** 说明文件自带的资源表:类型(images、anim)→ 名字 → 文件路径;按屏幕密度与深浅色选好(现行规则「系统事件接入」) */
     private val resources: Map<String, Map<String, String>> = emptyMap(),
+    /** 模板版本号:动作里的 package 只有 2.001.000 起的模板才读(官方卡片引擎 d6/r3.java:665) */
+    private val versionCode: Long = 0L,
+    /** 页面级特效:coeRes、cardLight、customBgConfig,代入数据后放在内容树根上 */
+    private val coeRes: JSONObject? = null,
+    private val cardLight: JSONArray? = null,
+    private val customBgConfig: JSONObject? = null,
 ) {
-    class Node(val type: String, val level: String, val attrs: Map<String, String>, val events: Map<String, String>, val shown: String?)
+    class Node(val type: String, val level: String, val attrs: Map<String, String>, val events: Map<String, String>,
+               val shown: String?, val classes: List<String> = emptyList(), val styleColor: String? = null)
 
     /** 说明文件里的层级 */
     class Tree(val node: Node, val children: List<Tree>)
@@ -57,17 +64,23 @@ class CloudTemplate(
     /**
      * 这张卡片此刻的官方内容树:流体云那一张 card-template 整棵,照模板的类型、位置代号与先后。显示条件(shown、show)不成立的元素去掉;
      * 属性全部代入数据,图片以外的换成当前语言;用到的数据读不到的属性不写(与模板引擎一致)。图片属性按 [image] 读好放进
-     * [PageNode.images];交互只留 actions 里登记了的动作。
+     * [PageNode.images];交互只留 actions 里登记了的动作。页面级 coeRes、cardLight、customBgConfig 代入数据后写在根上。
      */
     fun page(data: Map<String, String>, image: (type: String, attrs: Map<String, String>, value: String) -> EventImage?): PageNode? {
         val scope = scope(data)
-        return firstCard(tree)?.let { pageNode(it, scope, image) }
+        return firstCard(tree)?.let { pageNode(it, scope, image) }?.let { root ->
+            val effects = LinkedHashMap<String, String>()
+            coeRes?.let { effects["coeRes"] = resolveJson(it, scope)?.toString().orEmpty() }
+            cardLight?.let { effects["cardLight"] = resolveCardLight(it, scope)?.toString().orEmpty() }
+            customBgConfig?.let { effects["customBgConfig"] = resolveJson(it, scope)?.toString().orEmpty() }
+            if (effects.isEmpty()) root else root.copy(attrs = root.attrs + OfficialCloudEngine.attrs(effects))
+        }
     }
 
     /** 流体云那一张:entry 写着 notification 的 card-template(同一页里还可能有给桌面的 desktop 卡片) */
     private fun firstCard(list: List<Tree>): Tree? {
         for (item in list) {
-            if (item.node.type == CARD && "notification" in item.node.attrs["entry"].orEmpty().split(",").map(String::trim)) return item
+            if (item.node.type == CARD && item.node.attrs["entry"].orEmpty().contains("notification")) return item
             firstCard(item.children)?.let { return it }
         }
         return null
@@ -82,15 +95,23 @@ class CloudTemplate(
         for ((name, raw) in node.attrs) {
             val value = OfficialCloudExpr.text(raw, scope, strings) ?: continue
             if (name in PAGE_IMAGES) { attrs[name] = value; continue }
-            // 写成资源代号的($r('color.xxx') 这类)按说明文件自带的资源表换成实际的值,深色优先;表里没有的不写
-            val text = translate(value)
-            val ref = RESOURCE.matchEntire(unwrap(text))?.groupValues?.get(1)
-            attrs[name] = if (ref == null) text else resources[ref.substringBefore('.')]?.get(ref.substringAfter('.')) ?: continue
+            attrs[name] = resolveValue(value) ?: continue
         }
+        // 元素的 style.color 在没写 shown 时转成文字颜色(官方卡片引擎 v6/z3.java:1729-1737)
+        if (node.shown.isNullOrEmpty()) node.styleColor?.let { raw ->
+            OfficialCloudExpr.text(raw, scope, strings)?.let { resolveValue(it) }?.let { attrs["color"] = it; attrs["textColor"] = it }
+        }
+        // 文字元素的 classList:官方 TextLoader 只取第一个样式类当字号,写明 fontSize 的以 fontSize 为准;
+        // 段(span)与文字元素用的字号表不同(见 OfficialCloudEngine.classFontSize)
+        if ((node.type == "text" || node.type == "span") && attrs["fontSize"].isNullOrEmpty() && node.classes.isNotEmpty()) {
+            val first = OfficialCloudExpr.text(node.classes.first(), scope, strings).orEmpty()
+            OfficialCloudEngine.classFontSize(first, node.type)?.let { attrs["fontSize"] = it }
+        }
+        val kept = OfficialCloudEngine.attrs(attrs)
         val images = LinkedHashMap<String, EventImage>()
         for (name in PAGE_IMAGES) {
-            val value = attrs[name]?.trim()?.takeIf { it.isNotEmpty() } ?: continue
-            image(node.type, attrs, value)?.let { images[name] = it }
+            val value = kept[name]?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+            image(node.type, kept, value)?.let { images[name] = it }
         }
         // 进度条的节点图标(nodeIcons)写成图片地址的数组(官方 p2 按 JSON 数组逐项读):第 i 项放在 nodeIcons[i]
         attrs["nodeIcons"]?.trim()?.takeIf { it.startsWith("[") }?.let { raw ->
@@ -99,11 +120,83 @@ class CloudTemplate(
                 val value = translate(list.getString(i)).let { item ->
                     RESOURCE.matchEntire(unwrap(item))?.groupValues?.get(1)?.let { ref -> "\$r('$ref')" } ?: item
                 }
-                image(node.type, attrs, value)?.let { images["nodeIcons[$i]"] = it }
+                image(node.type, kept, value)?.let { images["nodeIcons[$i]"] = it }
             }
         }
-        return PageNode(node.type, node.level, OfficialCloudEngine.attrs(attrs), item.children.mapNotNull { pageNode(it, scope, image) }, images,
+        return PageNode(node.type, node.level, kept, item.children.mapNotNull { pageNode(it, scope, image) }, images,
             node.events.filterValues { it in actions })
+    }
+
+    /** 一个已代入数据的属性值:资源代号按选好的资源表换成实际值;表里没有的不写 */
+    private fun resolveValue(raw: String): String? {
+        val text = translate(raw)
+        val ref = RESOURCE.matchEntire(unwrap(text))?.groupValues?.get(1) ?: return text
+        return resources[ref.substringBefore('.')]?.get(ref.substringAfter('.'))
+    }
+
+    /** 页面级 JSON(coeRes、customBgConfig)逐项代入数据;读不到的那一项不写 */
+    private fun resolveJson(json: JSONObject, scope: Map<String, String>): JSONObject? {
+        val out = JSONObject()
+        for (key in json.keys()) {
+            when (val value = json.opt(key)) {
+                is String -> {
+                    val text = OfficialCloudExpr.text(value, scope, strings)
+                    val resolved = text?.let(::resolveValue)
+                    if (resolved != null) out.put(key, resolved)
+                }
+                is JSONObject -> resolveJson(value, scope)?.let { out.put(key, it) }
+                is JSONArray -> resolveArray(value, scope)?.let { out.put(key, it) }
+                null -> Unit
+                else -> out.put(key, value)
+            }
+        }
+        return out
+    }
+
+    private fun resolveArray(array: JSONArray, scope: Map<String, String>): JSONArray? {
+        val out = JSONArray()
+        for (i in 0 until array.length()) {
+            when (val value = array.opt(i)) {
+                is String -> {
+                    val text = OfficialCloudExpr.text(value, scope, strings)
+                    val resolved = text?.let(::resolveValue)
+                    if (resolved != null) out.put(resolved)
+                }
+                is JSONObject -> resolveJson(value, scope)?.let(out::put)
+                is JSONArray -> resolveArray(value, scope)?.let(out::put)
+                null -> Unit
+                else -> out.put(value)
+            }
+        }
+        return out
+    }
+
+    /** 卡片光效 cardLight(官方 v6/z3.java:809-835、1474-1494):只认 1 边缘、2 阴影、3 扩散三种 */
+    private fun resolveCardLight(array: JSONArray, scope: Map<String, String>): JSONArray? {
+        val out = JSONArray()
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            fun value(key: String): String? = item.optString(key).takeIf { it.isNotEmpty() }
+                ?.let { OfficialCloudExpr.text(it, scope, strings) }?.let(::resolveValue)
+            val type = value("type")?.toIntOrNull()?.takeIf { it in 1..3 } ?: continue
+            val color = value("color") ?: continue
+            val light = JSONObject().put("type", type.toString()).put("typeName", when (type) {
+                1 -> "edge"
+                2 -> "shadow"
+                else -> "diffusion"
+            }).put("color", color)
+            (value("subColor") ?: color).let { light.put("subColor", it) }
+            value("position")?.let { light.put("position", it) }
+            if (type == 3) {
+                light.put("stop", value("stop") ?: "false")
+                light.put("repeat", value("repeat") ?: "-1")
+                light.put("offsetX", value("offsetX") ?: "0")
+                light.put("offsetY", value("offsetY") ?: "0")
+                value("circleAlpha")?.let { light.put("circleAlpha", it) }
+            }
+            out.put(light)
+        }
+        return out
     }
 
     /**
@@ -133,7 +226,9 @@ class CloudTemplate(
         if (type == TYPE_MESSAGE && uri.isBlank()) return null
         // 模板没写方法名时,方法名就是动作名(与系统的卡片引擎一致)
         val method = if (raw.has("method")) field("method").orEmpty() else name
-        return CloudAction(type, uri, method.ifBlank { name }, params, field("data"), field("package"), field("flag"))
+        // 2.001.000 以前的模板不读 package(官方 d6/r3.java:665);写了 package 的去掉动作名后的空值用动作名
+        val packageName = if (versionCode >= 2_001_000L) field("package") ?: name else null
+        return CloudAction(type, uri, method.ifBlank { name }, params, field("data"), packageName, field("flag"))
     }
 
     private val pictures = HashMap<String, CloudImage>()
@@ -210,23 +305,24 @@ class CloudTemplate(
             !level.contains(':') || level == "-1:template" || level == "-2:swiper" -> if (level.endsWith("*") && level.length > 1) level.dropLast(1) else level
             else -> level.substring(0, level.indexOf(':') + 1)
         }
-        /** 从模板文件内容建模板;[dir] 是模板所在目录(找图片用),[strings] 是当前语言的文字表。 */
+        /** 从模板文件内容建模板;[dir] 是模板所在目录(找图片用),[strings] 是当前语言的文字表,[versionCode] 是模板版本。 */
         fun parse(json: String, strings: Map<String, String> = emptyMap(), dir: File? = null,
-                  resources: Map<String, Map<String, String>> = emptyMap()): CloudTemplate? = runCatching {
+                  resources: Map<String, Map<String, String>> = emptyMap(), versionCode: Long = 0L): CloudTemplate? = runCatching {
             val root = JSONObject(json)
             var count = 0
             var cardClick: String? = null
             val actions = root.optJSONObject("actions")?.let { a -> a.keys().asSequence().mapNotNull { k ->
                 val ways = when (val value = a.opt(k)) {
                     is JSONObject -> listOf(value)
-                    is JSONArray -> (0 until value.length()).mapNotNull { value.optJSONObject(it) }
+                    // 登记成数组时官方只执行 deeplink 写法(官方 v6/z3.java:1443-1451)
+                    is JSONArray -> (0 until value.length()).mapNotNull { value.optJSONObject(it)?.takeIf { it.optString("type") == TYPE_DEEPLINK } }
                     else -> emptyList()
                 }
                 ways.takeIf { it.isNotEmpty() }?.let { k to it }
             }.toMap() }.orEmpty()
             // 官方卡片引擎(seedlingsdk v6/z3.l1 与 z3.b.C)把元素的事件按层级(md.R 化简后)登记,同一层级同一事件后登记的为准,
             // 显示条件不成立的元素也登记;按下时按元素的层级取动作(z3.b.B)。秒表计时中的暂停、计次按钮自己不写事件,
-            // 用的是同层级的开始、取消按钮登记的动作
+            // 用的是同层级开始、取消按钮登记的动作
             val levelEvents = HashMap<String, LinkedHashMap<String, String>>()
             fun build(value: Any?, depth: Int): List<Tree> {
                 if (depth > 40 || count > 2048) return emptyList()
@@ -234,10 +330,20 @@ class CloudTemplate(
                     is JSONArray -> (0 until value.length()).flatMap { build(value.opt(it), depth + 1) }
                     is JSONObject -> {
                         val type = value.optString("type")
-                        val attrs = value.optJSONObject("attr")?.let { attr -> attr.keys().asSequence().associateWith { attr.opt(it)?.toString().orEmpty() } }.orEmpty()
+                        val attrs = LinkedHashMap<String, String>()
+                        value.optJSONObject("attr")?.let { attr -> attr.keys().forEach { attrs[it] = attr.opt(it)?.toString().orEmpty() } }
+                        // 循环节点的位置代号官方默认 -2:swiper,repeat 原样交给排版(官方 v6/z3.java:1723-1742)
+                        if (type == "swiper" && attrs["level"].isNullOrEmpty()) attrs["level"] = "-2:swiper"
+                        value.optString("repeat").takeIf { it.isNotEmpty() }?.let { attrs["repeat"] = it }
                         val events = value.optJSONObject("events")?.let { ev -> ev.keys().asSequence().associateWith { ev.optString(it) } }.orEmpty()
-                        if (type == CARD && cardClick == null && "notification" in attrs["entry"].orEmpty().split(",").map(String::trim)) cardClick = events["click"]
-                        val node = Node(type, attrs["level"].orEmpty(), attrs, events, value.optString("shown", "").takeIf { it.isNotEmpty() })
+                        if (type == CARD && cardClick == null && attrs["entry"].orEmpty().contains("notification")) cardClick = events["click"]
+                        // classList 只对文字生效:官方取第一个样式类定字号,样式类里的数据照样代入
+                        val classes = value.optJSONArray("classList")?.let { list ->
+                            (0 until list.length()).mapNotNull { list.optString(it).takeIf(String::isNotEmpty) }
+                        }.orEmpty()
+                        val styleColor = value.optJSONObject("style")?.optString("color")?.takeIf { it.isNotEmpty() }
+                        val node = Node(type, attrs["level"].orEmpty(), attrs, events,
+                            value.optString("shown", "").takeIf { it.isNotEmpty() }, classes, styleColor)
                         count++
                         val children = build(value.opt("children"), depth + 1)
                         levelKey(node.level)?.let { key -> events.filterValues { it in actions }.forEach { (event, action) -> levelEvents.getOrPut(key, ::LinkedHashMap)[event] = action } }
@@ -248,11 +354,12 @@ class CloudTemplate(
             }
             fun resolve(item: Tree): Tree = item.node.let { node ->
                 val events = levelKey(node.level)?.let { levelEvents[it].orEmpty() } ?: node.events
-                Tree(Node(node.type, node.level, node.attrs, events, node.shown), item.children.map(::resolve))
+                Tree(Node(node.type, node.level, node.attrs, events, node.shown, node.classes, node.styleColor), item.children.map(::resolve))
             }
             val tree = build(root.opt("template"), 0).map(::resolve)
             val defaults = root.optJSONObject("data")?.let(::flatten).orEmpty()
-            CloudTemplate(actions, defaults, strings, dir, cardClick, tree, resources)
+            CloudTemplate(actions, defaults, strings, dir, cardClick, tree, resources, versionCode,
+                root.optJSONObject("coeRes"), root.optJSONArray("cardLight"), root.optJSONObject("customBgConfig"))
         }.getOrNull()
 
         /** 卡片数据只取第一层:文字、数字、真假原样转成文字,里面再套的对象或数组保留原文(与系统发送参数时的写法一致)。 */
@@ -295,6 +402,8 @@ object OfficialCloudTemplates {
 
     /** 模板目录 → 说明文件写的服务意图(连同读的时候 config.json 的修改时间;读不到的也记下) */
     private val intents = HashMap<String, Pair<Long, String>>()
+    /** 模板目录 → 说明文件写的第一页(连同 config.json 的修改时间;没有时为空) */
+    private val firstPages = HashMap<String, Pair<Long, String>>()
     /** config.json 的大小上限(手机上的都在几 KB 以内) */
     private const val MAX_CONFIG_BYTES = 256 * 1024
 
@@ -312,23 +421,58 @@ object OfficialCloudTemplates {
         action
     }.getOrDefault("")
 
-    /** 读模板文件(页面文件没变、语言没变时用解析过的那一份)。会碰文件,排卡片时用 [current]。 */
+    /**
+     * 卡片数据没写页名时用说明文件 runtime.interactive.pages 的第一页(官方三代 JsCardParser:q4.java:149-153、
+     * g4.java:149、b4.java:145-150)。同一个模板目录只读一次,文件变了再读。
+     */
+    private fun firstPage(context: Context, serviceId: String, version: Long): String = runCatching {
+        val file = File(directory(root(context), serviceId, version) ?: return "", "config.json")
+        val modified = file.lastModified()
+        synchronized(firstPages) { firstPages[file.path]?.takeIf { it.first == modified }?.let { return it.second } }
+        val page = file.takeIf { it.isFile && it.length() <= MAX_CONFIG_BYTES }?.readText()
+            ?.let { JSONObject(it).optJSONObject("runtime")?.optJSONObject("interactive")?.optJSONArray("pages")?.optString(0) }
+            ?.trim().orEmpty().take(200)
+        synchronized(firstPages) { if (firstPages.size >= 128) firstPages.clear(); firstPages[file.path] = modified to page }
+        page
+    }.getOrDefault("")
+
+    /** 读模板文件(页面文件没变、语言、屏幕密度、深浅色没变时用解析过的那一份)。会碰文件,排卡片时用 [current]。 */
     fun load(context: Context, serviceId: String, version: Long, pageId: String, locale: Locale = Locale.getDefault()): CloudTemplate? = runCatching {
         val dir = directory(root(context), serviceId, version) ?: return null
         // 页名写法有「index」「pages/index」「pages/index.json」几种(卡片引擎报的是最后一种),统一成文件名
-        val name = pageId.trim().removePrefix("/").removePrefix("pages/").removeSuffix(".json")
-        val page = listOf(name.takeIf { it.isNotBlank() && it.all { c -> c.isLetterOrDigit() || c == '_' || c == '-' } }, "index")
-            .firstNotNullOfOrNull { candidate -> candidate?.let { File(dir, "pages/$it.json") }?.takeIf { it.isFile } } ?: return null
-        // 文字表按语言读:换了语言按新语言重读(现行规则「系统事件接入」)
-        val key = "${page.absolutePath}|${locale.toLanguageTag()}"
+        fun pageName(raw: String): String = raw.trim().removePrefix("/").removePrefix("pages/").removeSuffix(".json")
+        val requested = pageId.takeIf { it.isNotBlank() }?.let(::pageName)
+        val name = requested ?: pageName(firstPage(context, serviceId, version))
+        // 数据没写页名时用说明文件的第一页;数据写明的页找不到时按官方留空,不再退到 index
+        val page = name.takeIf { it.isNotBlank() && it.all { c -> c.isLetterOrDigit() || c == '_' || c == '-' } }
+            ?.let { File(dir, "pages/$it.json") }?.takeIf { it.isFile } ?: return null
+        // 文字表按语言读;资源表按屏幕密度选(官方 u5.java:175-306),深浅色一律取深色那份:
+        // 星河岛和状态栏流体云的底色都固定是黑色,不跟手机的浅色模式走
+        val density = density(context)
+        val key = "${page.absolutePath}|${locale.toLanguageTag()}|${density ?: "-"}"
         val modified = page.lastModified()
         synchronized(cache) {
             cache[key]?.takeIf { it.modified == modified }?.let { return it.template }
         }
-        val parsed = CloudTemplate.parse(page.readText(), strings(dir, locale), dir, resources(dir))
+        val parsed = CloudTemplate.parse(page.readText(), strings(dir, locale), dir, resources(dir, density),
+            dir.name.toLongOrNull() ?: version)
         synchronized(cache) { cache[key] = Cached(modified, parsed) }
         parsed
     }.getOrNull()
+
+    /** 屏幕密度档(官方 u5.q():按显示密度分 ldpi/mdpi/hdpi/xhdpi/xxhdpi/xxxhdpi) */
+    private fun density(context: Context): String? {
+        val value = context.resources.displayMetrics.density
+        return when {
+            value <= 0f -> null
+            value < 0.875f -> "ldpi"
+            value < 1.25f -> "mdpi"
+            value < 1.75f -> "hdpi"
+            value < 2.5f -> "xhdpi"
+            value < 3.5f -> "xxhdpi"
+            else -> "xxxhdpi"
+        }
+    }
 
     /** 排卡片用过的请求(服务号、版本、页、语言)→ 最近一次读到的模板(没有模板也记下) */
     private class Known(val template: CloudTemplate?)
@@ -360,32 +504,87 @@ object OfficialCloudTemplates {
     /** 检查用:换掉后台线程(传 null 换回原来的) */
     fun useWorkerForTest(replacement: Executor?) { worker = replacement ?: background }
 
-    /** 说明文件自带的资源表(assets/res/default.json,深色 dark.json 覆盖同名项):类型 → 名字 → 文件路径。 */
-    private fun resources(dir: File): Map<String, Map<String, String>> {
+    /**
+     * 说明文件自带的资源表(官方 u5.t() 深色时的顺序:本屏幕密度的 dark、phone-dark,再 dark,最后 default)。
+     * 每个键以先找到的那张表为准,不按文件整体覆盖。类型 → 名字(可带下一层,用点连起来) → 值。
+     */
+    private fun resources(dir: File, density: String?): Map<String, Map<String, String>> {
+        val names = buildList {
+            density?.let { add("dark-$it.json") }
+            density?.let { add("phone-dark-$it.json") }
+            add("dark.json")
+            add("default.json")
+        }
         val tables = HashMap<String, HashMap<String, String>>()
-        for (name in listOf("default", "dark")) {
-            val file = File(dir, "assets/res/$name.json").takeIf { it.isFile } ?: continue
+        for (name in names) {
+            val file = File(dir, "assets/res/$name").takeIf { it.isFile } ?: continue
             runCatching {
                 val json = JSONObject(file.readText())
                 for (type in json.keys()) {
                     val table = json.optJSONObject(type) ?: continue
                     val into = tables.getOrPut(type) { HashMap() }
-                    for (key in table.keys()) table.optString(key).takeIf { it.isNotBlank() }?.let { into[key] = it }
+                    flattenResource(table, "", into)
                 }
             }
         }
         return tables
     }
 
-    /** 这种语言的文字表(找不到时依次退到同语言、简体中文、英文)。 */
+    private fun flattenResource(json: JSONObject, prefix: String, into: MutableMap<String, String>) {
+        for (key in json.keys()) {
+            val value = json.opt(key)
+            when (value) {
+                is JSONObject -> flattenResource(value, prefix + key + ".", into)
+                is JSONArray -> Unit
+                null -> Unit
+                else -> value.toString().takeIf { it.isNotBlank() }?.let { into.putIfAbsent(prefix + key, it) }
+            }
+        }
+    }
+
+    /**
+     * 这种语言的文字表(官方 u5.z():先精确语言-地区,再语言,再同语言的其他地区,最后 defaults、en)。
+     * 每个代号以先找到的那份翻译为准;都找不到时为空。
+     */
     private fun strings(dir: File, locale: Locale): Map<String, String> {
-        val names = listOf("${locale.language}-${locale.country}", locale.language, "zh-CN", "en-US")
-        val file = names.map { File(dir, "i18n/$it.json") }.firstOrNull { it.isFile } ?: return emptyMap()
-        return runCatching {
-            val json = JSONObject(file.readText())
-            val table = json.optJSONObject("strings") ?: json
-            table.keys().asSequence().associateWith { table.optString(it) }
-        }.getOrDefault(emptyMap())
+        val folder = File(dir, "i18n")
+        val available = folder.listFiles()?.filter { it.isFile && it.name.endsWith(".json") }
+            ?.map { it.name.removeSuffix(".json") }?.sortedBy { it.lowercase(Locale.ROOT) }.orEmpty()
+        if (available.isEmpty()) return emptyMap()
+        val language = locale.language
+        val country = locale.country
+        val names = buildList {
+            if (language.isNotEmpty()) {
+                if (country.isNotEmpty()) add("$language-$country")
+                add(language)
+                addAll(available.filter { it.startsWith("$language-") && country.isNotEmpty() && it.contains(country) })
+                addAll(available.filter { it.startsWith("$language-") })
+            }
+            if ("defaults" in available) add("defaults")
+            addAll(available.filter { it.startsWith("en") })
+        }.distinct()
+        val result = HashMap<String, String>()
+        for (name in names) {
+            val file = File(folder, "$name.json").takeIf { it.isFile } ?: continue
+            runCatching {
+                val json = JSONObject(file.readText())
+                val table = json.optJSONObject("strings") ?: json
+                flattenStrings(table, "", result)
+            }
+        }
+        return result
+    }
+
+    private fun flattenStrings(json: JSONObject, prefix: String, into: MutableMap<String, String>) {
+        for (key in json.keys()) {
+            val value = json.opt(key)
+            when (value) {
+                is JSONObject -> flattenStrings(value, prefix + key + ".", into)
+                is JSONArray -> Unit
+                null -> Unit
+                else -> value.toString().takeIf { it.isNotBlank() }?.let { into.putIfAbsent(prefix + key, it) }
+            }
+        }
     }
 
     fun sha256(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
@@ -395,6 +594,8 @@ object OfficialCloudTemplates {
         synchronized(cache) { cache.clear() }
         synchronized(versions) { versions.clear() }
         synchronized(known) { known.clear() }
+        synchronized(intents) { intents.clear() }
+        synchronized(firstPages) { firstPages.clear() }
         storage = null
     }
 }
@@ -429,8 +630,12 @@ object OfficialCloudExpr {
 
     fun truthy(value: String?): Boolean = !(value == null || value.isEmpty() || value == "false" || value == "0" || value == "null")
 
-    fun evaluate(expression: String, scope: Map<String, String>, strings: Map<String, String>): String? =
-        runCatching { Parser(expression, scope, strings).parse() }.getOrNull()
+    fun evaluate(expression: String, scope: Map<String, String>, strings: Map<String, String>): String? {
+        // 花括号里直接写图片路径(识别音乐 {{assets/images/icon_logo_small.svg}}):官方原样当作值(官方 v6/z3.java:1932-1933)
+        val path = expression.trim()
+        if (path.startsWith("assets/") || path.startsWith("/assets/")) return path
+        return runCatching { Parser(expression, scope, strings).parse() }.getOrNull()
+    }
 
     private class Parser(private val s: String, private val scope: Map<String, String>, private val strings: Map<String, String>) {
         private var i = 0

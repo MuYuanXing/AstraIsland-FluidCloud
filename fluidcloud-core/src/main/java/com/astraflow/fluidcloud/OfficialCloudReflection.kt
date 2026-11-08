@@ -77,13 +77,18 @@ object OfficialCloudReflection {
 
     /**
      * 系统流体云的一条记录:系统服务卡片来自新读法(OfficialCloudSeedlingReader.Entry,只读 OPPO 接口);
-     * 通知变成的胶囊来自系统流体云插件的数据监听(SOURCE_COMMON)。插件自己的系统服务记录不再读。
+     * 通知变成的胶囊来自系统流体云插件的数据监听(SOURCE_COMMON,以及 C16/C17 新通知管线的 SOURCE_NOTIFICATION,
+     * 两者都带着那条通知)。插件自己的系统服务记录不再读。
      */
     fun isOfficial(model: Any): Boolean = if (model is OfficialCloudSeedlingReader.Entry) true else when (val type = call(model, "getSourceType")?.toString()) {
         "SOURCE_SEEDLING" -> false
-        "SOURCE_COMMON" -> fieldOfType(model, "android.service.notification.StatusBarNotification") is android.service.notification.StatusBarNotification
+        "SOURCE_COMMON", "SOURCE_NOTIFICATION" -> fieldOfType(model, SBN) is android.service.notification.StatusBarNotification
         else -> { noteOtherType(model, type); false } // 标准通知继续由岛现有通知来源接收。
     }
+
+    /** 通知变成的胶囊:两个通知管线送来、带着那条通知的记录(数据入口按来源类型认,读不读得出由 [isOfficial] 核) */
+    fun isNotification(model: Any): Boolean =
+        call(model, "getSourceType")?.toString() in setOf("SOURCE_COMMON", "SOURCE_NOTIFICATION")
 
     /** 认不出的记录类型(包括读不到类型)每种写一行进岛的日志(正式包也看得到),系统换了写法时看得出为什么没上岛。 */
     private val otherTypes = linkedSetOf<String>()
@@ -99,7 +104,7 @@ object OfficialCloudReflection {
 
     /** 到货诊断用的一句话:服务号与数据大小;通知转成的系统卡片写成 common:包名:通知编号。只读字段,不调用会改状态的方法。 */
     fun describe(model: Any): String {
-        if (call(model, "getSourceType")?.toString() == "SOURCE_COMMON") {
+        if (isNotification(model)) {
             val sbn = fieldOfType(model, SBN) as? android.service.notification.StatusBarNotification
             return "common:${sbn?.packageName}:${sbn?.id}"
         }
@@ -108,7 +113,7 @@ object OfficialCloudReflection {
             "data=${(call(model.ui, "getData") as? ByteArray)?.size ?: 0}"
     }
 
-    /** 通知变成的系统胶囊(不是系统服务推送的卡片)。 */
+    /** 通知变成的胶囊(不是系统服务推送的卡片)。 */
     fun isCommon(model: Any): Boolean = call(model, "getSourceType")?.toString() == "SOURCE_COMMON"
 
     /** 这条记录在哪个显示位置(系统流体云插件自己的 ENTRY_STATUS_BAR、ENTRY_NOTIFICATION、ENTRY_AOD);读不到时为 null。 */
@@ -161,7 +166,7 @@ object OfficialCloudReflection {
      */
     fun snapshot(model: Any, revision: Long): CloudSnapshot? {
         if (!isOfficial(model)) return null
-        if (model !is OfficialCloudSeedlingReader.Entry) return if (isCommon(model)) commonSnapshot(model, revision) else null
+        if (model !is OfficialCloudSeedlingReader.Entry) return commonSnapshot(model, revision)
         val service = model.service
         val ui = model.ui
         val options = call(service, "getNewSeedlingCardOptions") ?: call(service, "getSeedlingCardOptions")

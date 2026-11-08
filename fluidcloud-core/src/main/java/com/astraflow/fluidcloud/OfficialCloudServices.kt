@@ -39,15 +39,36 @@ object OfficialCloudServices {
     /** 系统界面在别的机型上用来播放音乐的服务号(插件里与 268452006 同样当作音乐)。 */
     private val MEDIA_SERVICES = setOf(MEDIA, "268451910", "268451911", "268451900")
     /** 系统开关的提示:手电筒、勿扰、三段式按键、护眼、个人热点、手势。 */
-    private val SWITCH_SERVICES = setOf(FLASHLIGHT, DND, THREE_KEY, EYE_PROTECT, HOTSPOT, GESTURE)
+    private val SWITCH_SERVICES = setOf(FLASHLIGHT, DND, THREE_KEY, EYE_PROTECT, HOTSPOT, GESTURE, "268451906",
+        "268451853", "268451855", "268451903", "268452029", "268452030")
     /** 用麦克风的系统服务:AI 语音摘记、识别背景音乐,按现行规则归入麦克风。 */
     private val MICROPHONE_SERVICES = setOf("268451848", "268452024")
     /** 通话服务号:OPPO 电话、ColorOS 无障碍三方通话、一加电话。 */
     private val CALL_SERVICES = setOf(CALL, "268451940", "268451915")
-    /** 设备快连:我的设备、耳机、配件。 */
-    private val DEVICE_SERVICES = setOf(MY_DEVICES, "268451912", "268451913")
+    /** 设备快连、投屏、手表与设备中心的连接提示。 */
+    private val DEVICE_SERVICES = setOf(MY_DEVICES, "268451912", "268451913", "268451841", "268451842", "268451859", "268451860",
+        "268451901", "268451907", "268451921", "268451914", "268451933", "268452034", "268452044",
+        "268451846", "268451920", "268451847", "268451851", "268451857", "268451856", "268451858", "268452045")
+    private val DEVICE_INTENTS = setOf(
+        "pantanal.intent.business.app.system.CAST_SCREEN_TV", "pantanal.intent.business.app.system.CAST_SCREEN_PC",
+        "pantanal.intent.business.app.system.CAST_SCREEN_TV_CAPSULE", "pantanal.intent.business.app.system.CAST_SCREEN_TV_CARD",
+        "pantanal.intent.business.app.system.CAST_APP_SCREEN_TV_CARD", "pantanal.intent.business.app.system.CAST_SCREEN_CAR",
+        "pantanal.intent.business.app.system.CAST_IMMEDIATE_SCREEN_TV_CARD", "pantanal.intent.business.app.system.PHONE_UNLOCK_WATCH",
+        "pantanal.intent.business.app.system.TOUCH_SHARE_ANIMATION_END", "pantanal.intent.business.app.system.DEVICEHUB_ANIMATION_END",
+        "pantanal.intent.business.app.system.REMOTE_CONNECT",
+    )
+    private val SYSTEM_SWITCH_INTENTS = setOf("pantanal.intent.business.app.system.VIP_MODE")
+    private val CLOCK_INTENTS = mapOf(
+        "pantanal.intent.business.app.system.TIMER" to EventKind.TIMER,
+        "pantanal.intent.business.app.system.ALARM" to EventKind.ALARM,
+        "pantanal.intent.business.app.system.STOPWATCH" to EventKind.STOPWATCH,
+        "pantanal.intent.business.app.system.GARBALARM" to EventKind.FLASH_ALARM,
+    )
     /** 一加时钟的计时器与一加录音:和一加手机的 OPPO 对应服务同样排。 */
     private const val ONEPLUS_TIMER = "268451943"
+    private const val ONEPLUS_ALARM = "268451944"
+    private const val ONEPLUS_STOPWATCH = "268451950"
+    private const val ONEPLUS_GARB_ALARM = "268451953"
     private const val ONEPLUS_SOUND_RECORDER = "268451941"
     private val RECORDER_SERVICES = setOf(SCREEN_RECORDER, SOUND_RECORDER, ONEPLUS_SOUND_RECORDER)
 
@@ -75,16 +96,17 @@ object OfficialCloudServices {
 
     /** 外卖:美团外卖、美团拼好饭外卖、京东外卖(两种)、淘宝闪购、淘宝外卖、饿了么;快递提醒、车辆充电进度先按外卖模板排 */
     private val TAKEOUT_SERVICES = setOf("536878029", "536879077", "536879078", "536878631", "536878700", "536878973", "536878642",
-        "536877201", "536878265", "536879310", "268452868")
-    /** 打车:高德打车、流体云地址上车 */
-    private val RIDE_SERVICES = setOf("536877203", "536874945")
-    /** 应用下载、游戏更新、互传发送中 */
-    private val TASK_SERVICES = setOf(DOWNLOAD, FILE_DOWNLOAD, "268451923", "268451905", "536878801",
-        "268451954", "268451955", "268451938", "268452007", "268452008", "268452009", "268452027", "268452050")
+        "536877201", "536878265", "536879310", "268452868", "536875050", "536875052")
+    /** 打车:高德打车、支付宝网约车、滴滴打车、流体云地址上车 */
+    private val RIDE_SERVICES = setOf("536877203", "536875051", "536877202", "536874945", "536879143")
+    /** 应用下载、游戏更新、互传发送中、远程电脑文件传输 */
+    private val TASK_SERVICES = setOf(DOWNLOAD, FILE_DOWNLOAD, "268451923", "268451905", "536878801", "268451934",
+        "268451954", "268451955", "268451938", "268452007", "268452008", "268452009", "268452027", "268452050",
+        "268451932", "268451956", "268452025", "268452026", "268452033")
     /** 百度地图步行、骑行导航(卡片由场景服务代发):C17 手机上的服务号,服务意图是 NAVIGATION_PROMPT_V5 */
     const val BAIDU_NAVIGATION = "536877940"
     /** 导航:高德驾车、高德骑行步行、百度驾车、百度步行骑行、腾讯地图驾车;驾车红绿灯提醒(高德、百度、腾讯) */
-    private val NAVIGATION_LAYOUT_SERVICES = setOf("536878696", "536879184", "536878591", "536879303", "536879377", "536879312", "536879383", BAIDU_NAVIGATION)
+    private val NAVIGATION_LAYOUT_SERVICES = setOf("536878696", "536879184", "536878591", "536879303", "536879377", "536879312", "536879383", "536878018", BAIDU_NAVIGATION)
     /** 游戏自己的复活倒计时(王者荣耀) */
     private val COUNTDOWN_SERVICES = setOf("536878737")
     /** 支付保护、应用内容已屏蔽、取单码、课程、地铁与各种场景提醒 */
@@ -92,7 +114,7 @@ object OfficialCloudServices {
     // 刷卡提醒、健康、小布记忆、一键闪记、红茶国际上网:都按通用提醒卡片排(系统卡片本身是标题+说明+按钮)。
     private val REMINDER_SERVICES = setOf("268451916", SCREEN_PROTECTION, "268451931", "268452048", "268452047", "536879177",
         "536875808", "536878517", "536878530", "536878968", "536874238", "536874236", "536878942", "536874734", "536879129",
-        "536879313", "536879143", "536879144", "536879305", "268452013", "268451904",
+        "536879313", "536879144", "536879305", "268452013", "268451904", "536879151", "268451908", "268452014",
         "536879167", "536871053", "536871054", "536871055", "536871056", "536874766", "536878690", "536879314", "536879315",
         "536879178", "268452019", "268452023", "268452046", "268452005", "268451925", "268451926", "268451936", "268452001",
         "268452002", "268452012", "268452016", "268452017", "268452018", "268452022", "268452028", "268452037", "268452038",
@@ -121,9 +143,10 @@ object OfficialCloudServices {
         fun add(layout: Layout, vararg actions: String) = actions.forEach { put("pantanal.intent.$it", layout) }
         add(Layout.TAKEOUT, "takeout.VIEW_ORDER_PROGRESS_V3", "delivery.FLUID", "new_energy_charging.VEHICLE_CHARGING_STATUS",
             "business.app.export.TAKE_OUT")
-        add(Layout.RIDE, "ridehailing.VIEW_ORDER_V3")
+        add(Layout.RIDE, "ridehailing.VIEW_ORDER_V3", "video.FLUID_ADDRESS_CAR")
         add(Layout.TASK, "business.app.system.MCS_DOWNLOAD_CARD", "business.app.system.UPDATE_PROGRESS",
             "business.app.system.OSHARE_SENDER_PROCESS", "business.app.system.FILEMANAGER_FILE_DOWNLOAD",
+            "business.app.system.REMOTE_FILE_TRANSFER",
             "business.app.system.AI_PAPER", "business.app.system.EXECUTE_ASSISTANT", "business.app.system.MATRIX",
             "business.app.system.MATRIX_IMMEDIATE", "business.app.system.AI_CAMERA_MOVEMENT", "business.app.system.AI_SCREEN_IMAGE",
             "business.app.system.OPLUS_GALLERY_PHOTO_EDITOR_AI_RETOUCH", "business.app.system.BIG_FILE_TRANSPORT",
@@ -141,8 +164,9 @@ object OfficialCloudServices {
             "business.app.system.AIMEMORY_WRITE_CLOCK", "violation_reminder.VIOLATION_REMINDER_SERVICE", "system.FLUID_WLAN_ON",
             "system.FLUID_FLASH_OFF", "contentconsult.TEXT_INTENT_IDENTIFY_V2",
             "weather.EXTREME_WEATHER_WARN", "contentconsult.TEXT_INTENT_IDENTIFY", "weather.WEATHER_RAIN_FORECAST",
-            "event_services.EVENT_FLUENCY_CLOUD", "video.FLUID_ADDRESS_CAR", "video.FLUID_ADDRESS_RECOGNITION",
-            "attendance_reminder.ATTENDANCE_CLOCK", "business.app.system.MCS_DOWNLOAD_SWITCH", "business.app.system.OSHARE_USER_CONFIRM")
+            "event_services.EVENT_FLUENCY_CLOUD", "video.FLUID_ADDRESS_RECOGNITION", "video.FLUID_MOVIE",
+            "attendance_reminder.ATTENDANCE_CLOCK", "business.app.system.MCS_DOWNLOAD_SWITCH", "business.app.system.OSHARE_USER_CONFIRM",
+            "business.app.system.ACTIVATION_BREENO_ADVICE", "business.app.system.BILL")
     }
 
     /**
@@ -164,10 +188,11 @@ object OfficialCloudServices {
         val id = snapshot.serviceId
         return when {
             id in CALL_SERVICES -> EventKind.CALL
-            id == TIMER || id == ONEPLUS_TIMER -> EventKind.TIMER
-            id == STOPWATCH -> EventKind.STOPWATCH
-            id == ALARM -> EventKind.ALARM
-            id == GARB_ALARM -> EventKind.FLASH_ALARM
+            id == TIMER || id == ONEPLUS_TIMER || CLOCK_INTENTS[snapshot.intentAction] == EventKind.TIMER -> EventKind.TIMER
+            id == STOPWATCH || id == ONEPLUS_STOPWATCH || CLOCK_INTENTS[snapshot.intentAction] == EventKind.STOPWATCH -> EventKind.STOPWATCH
+            id == ALARM || id == ONEPLUS_ALARM || CLOCK_INTENTS[snapshot.intentAction] == EventKind.ALARM -> EventKind.ALARM
+            id == GARB_ALARM || id == ONEPLUS_GARB_ALARM || CLOCK_INTENTS[snapshot.intentAction] == EventKind.FLASH_ALARM ->
+                EventKind.FLASH_ALARM
             id == GAME_TIMER -> EventKind.GAME_TIMER
             completionPage(snapshot) -> EventKind.RECORDING_SAVED
             id == SCREEN_RECORDER -> EventKind.SCREEN_RECORDING
@@ -175,9 +200,9 @@ object OfficialCloudServices {
             id in MICROPHONE_SERVICES -> EventKind.MICROPHONE_SERVICE
             id == CHARGE -> EventKind.CHARGING
             id == BATTERY -> EventKind.BATTERY_TIP
-            id in DEVICE_SERVICES -> EventKind.DEVICE
+            id in DEVICE_SERVICES || snapshot.intentAction in DEVICE_INTENTS -> EventKind.DEVICE
             id in MEDIA_SERVICES || systemMediaNotification(snapshot) -> EventKind.MUSIC
-            id in SWITCH_SERVICES -> EventKind.SYSTEM_SWITCH
+            id in SWITCH_SERVICES || snapshot.intentAction in SYSTEM_SWITCH_INTENTS -> EventKind.SYSTEM_SWITCH
             id == SATELLITE_CALL -> EventKind.SATELLITE_CALL
             else -> when (layout(snapshot)) {
                 Layout.TAKEOUT -> EventKind.ORDER_PROGRESS
@@ -273,9 +298,11 @@ object OfficialCloudServices {
         HOTSPOT to "个人热点", EYE_PROTECT to "护眼",
     )
 
-    fun ringing(snapshot: CloudSnapshot): Boolean = when (snapshot.serviceId) {
-        ALARM -> snapshot.data["alarm_alarm_ring"] == "true"
-        TIMER -> snapshot.data["timer_ring"] == "true"
+    fun ringing(snapshot: CloudSnapshot): Boolean = when {
+        snapshot.serviceId == ALARM || snapshot.serviceId == ONEPLUS_ALARM ||
+            snapshot.intentAction == "pantanal.intent.business.app.system.ALARM" -> snapshot.data["alarm_alarm_ring"] == "true"
+        snapshot.serviceId == TIMER || snapshot.serviceId == ONEPLUS_TIMER ||
+            snapshot.intentAction == "pantanal.intent.business.app.system.TIMER" -> snapshot.data["timer_ring"] == "true"
         else -> false
     }
 }
