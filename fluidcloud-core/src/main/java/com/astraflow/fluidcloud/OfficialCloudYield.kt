@@ -80,10 +80,7 @@ object OfficialCloudYield {
         }
     }
 
-    /**
-     * 系统显示列表的副本:状态栏那一份里该藏的不交给系统;没经过数据门的就地读取交给星河岛。
-     * 认不出身份、读不出内容树的记录交还系统(藏了系统那份而星河岛画不出来,用户就什么都看不到)。
-     */
+    /** 系统显示列表的副本:状态栏那一份里该藏的不交给系统;没经过数据门的就地读取交给星河岛 */
     fun filter(input: List<*>): ArrayList<Any?> {
         val output = ArrayList<Any?>(input.size)
         val present = HashSet<String>(input.size)
@@ -94,14 +91,13 @@ object OfficialCloudYield {
             if (displayEntrance(model, key) != ENTRY_STATUS_BAR) { output += model; continue }
             statusBar = true
             if (key == null) {
-                // 认不出身份的记录:读不了也就不藏,交给系统照常显示
-                output += model
+                // 认不出身份的记录读不了内容,也就上不了星河岛:写一行日志,照规矩藏起
+                if (OfficialCloudSource.hidesUnknown()) noteUnreadable(model) else output += model
                 continue
             }
             present += key
-            // 没经过数据门的记录就地读一次交给星河岛;读不出内容树的,整理后按结果交还系统
+            if (!OfficialCloudSource.hides(key)) { output += model; continue }
             if (!OfficialCloudSource.known(key)) OfficialCloudSource.receiveFromDisplay(model)
-            if (!OfficialCloudSource.hides(key)) output += model
         }
         if (statusBar) OfficialCloudSource.noteDisplayList(present)
         return output
@@ -119,6 +115,11 @@ object OfficialCloudYield {
     }
 
     private val noted = linkedSetOf<String>()
+
+    private fun noteUnreadable(model: Any) {
+        if (synchronized(noted) { noted.size < 64 && noted.add(model.javaClass.name) })
+            com.astraflow.fluidcloud.hook.Log.w("OfficialCloud", "status bar record without identity on ${model.javaClass.name}; hidden, not readable")
+    }
 
     /** 请系统按现在的条件重算状态栏那一份(主线程) */
     fun refresh() {
@@ -143,12 +144,7 @@ object OfficialCloudYield {
         if (status == next) return
         status = next
         OfficialCloudSource.reportVisibility()
-        // 出口装好后由出口藏:源头拦截不再截,把出口装好之前截住的那一份交还系统再由出口过滤
-        main.post(OfficialCloudGate::onGateStateChanged)
     }
-
-    /** 检查用:直接设显示出口的状态 */
-    fun statusForTest(next: Status) = updateStatus(next)
 
     fun resetForTest() {
         synchronized(displays) { displays.clear() }

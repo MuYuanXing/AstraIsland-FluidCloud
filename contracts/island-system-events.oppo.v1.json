@@ -102,13 +102,7 @@
         "268451918",
         "268451929",
         "268451843",
-        "268451927",
-        "268451906",
-        "268451853",
-        "268451855",
-        "268451903",
-        "268452029",
-        "268452030"
+        "268451927"
       ]
     },
     "taskProgress": {
@@ -125,13 +119,7 @@
         "268452050",
         "268451923",
         "268451905",
-        "536878801",
-        "268451934",
-        "268451932",
-        "268451956",
-        "268452025",
-        "268452026",
-        "268452033"
+        "536878801"
       ],
       "intents": [
         "pantanal.intent.business.app.system.MCS_DOWNLOAD_CARD",
@@ -146,8 +134,7 @@
         "pantanal.intent.business.app.system.AI_SCREEN_IMAGE",
         "pantanal.intent.business.app.system.OPLUS_GALLERY_PHOTO_EDITOR_AI_RETOUCH",
         "pantanal.intent.business.app.system.BIG_FILE_TRANSPORT",
-        "pantanal.intent.game.UPDATE_PROGRESS",
-        "pantanal.intent.business.app.system.REMOTE_FILE_TRANSFER"
+        "pantanal.intent.game.UPDATE_PROGRESS"
       ]
     },
     "orderProgress": {
@@ -162,9 +149,7 @@
         "536877201",
         "536878265",
         "536879310",
-        "268452868",
-        "536875050",
-        "536875052"
+        "268452868"
       ],
       "intents": [
         "pantanal.intent.takeout.VIEW_ORDER_PROGRESS_V3",
@@ -182,14 +167,10 @@
     "ride": {
       "services": [
         "536877203",
-        "536874945",
-        "536875051",
-        "536877202",
-        "536879143"
+        "536874945"
       ],
       "intents": [
-        "pantanal.intent.ridehailing.VIEW_ORDER_V3",
-        "pantanal.intent.video.FLUID_ADDRESS_CAR"
+        "pantanal.intent.ridehailing.VIEW_ORDER_V3"
       ]
     },
     "navigation": {
@@ -198,8 +179,7 @@
         "536879184",
         "536878591",
         "536879303",
-        "536877940",
-        "536878018"
+        "536877940"
       ],
       "intents": [
         "pantanal.intent.prompt.DRIVING_NAVIGATION",
@@ -240,6 +220,7 @@
         "536874734",
         "536879129",
         "536879313",
+        "536879143",
         "536879144",
         "536879305",
         "268452013",
@@ -278,10 +259,7 @@
         "268460003",
         "268460005",
         "268460006",
-        "536875277",
-        "536879151",
-        "268451908",
-        "268452014"
+        "536875277"
       ],
       "intents": [
         "pantanal.intent.business.app.system.PAY_SCAN",
@@ -305,13 +283,11 @@
         "pantanal.intent.contentconsult.TEXT_INTENT_IDENTIFY_V2",
         "pantanal.intent.weather.WEATHER_RAIN_FORECAST",
         "pantanal.intent.event_services.EVENT_FLUENCY_CLOUD",
+        "pantanal.intent.video.FLUID_ADDRESS_CAR",
         "pantanal.intent.video.FLUID_ADDRESS_RECOGNITION",
         "pantanal.intent.attendance_reminder.ATTENDANCE_CLOCK",
         "pantanal.intent.business.app.system.MCS_DOWNLOAD_SWITCH",
-        "pantanal.intent.business.app.system.OSHARE_USER_CONFIRM",
-        "pantanal.intent.video.FLUID_MOVIE",
-        "pantanal.intent.business.app.system.ACTIVATION_BREENO_ADVICE",
-        "pantanal.intent.business.app.system.BILL"
+        "pantanal.intent.business.app.system.OSHARE_USER_CONFIRM"
       ]
     },
     "appNotice": {
@@ -343,26 +319,7 @@
       "services": [
         "268451845",
         "268451912",
-        "268451913",
-        "268451841",
-        "268451842",
-        "268451859",
-        "268451860",
-        "268451901",
-        "268451907",
-        "268451921",
-        "268451914",
-        "268451933",
-        "268452034",
-        "268452044",
-        "268451846",
-        "268451920",
-        "268451847",
-        "268451851",
-        "268451857",
-        "268451856",
-        "268451858",
-        "268452045"
+        "268451913"
       ]
     }
   },

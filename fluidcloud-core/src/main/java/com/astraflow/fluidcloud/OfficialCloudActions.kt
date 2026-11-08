@@ -88,8 +88,7 @@ class OfficialCloudActions(
             return if (OfficialDirectPage.perform(sbn, name)) { lastPress = "$key|$id" to true; null } else "intent failed"
         }
         record.views?.let { views ->
-            // 整张卡片的点击锁屏时照样执行(打开的页面由系统要求先解锁),其余元素锁屏时不能点
-            if (locked && name != record.page.cardClick) return "device locked"
+            if (locked) return "device locked"
             val action = views.clicks[name] ?: return "no action"
             val way = executeWay(record, action) ?: return "action failed"
             lastPress = "$key|$id" to (way.type == CloudTemplate.TYPE_DEEPLINK)

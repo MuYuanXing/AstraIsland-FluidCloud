@@ -155,7 +155,7 @@ object OfficialCloudHook {
                             val owner = chain.thisObject
                             owner?.let(OfficialCloudYield::observeDisplay)
                             // 系统服务卡片由 OfficialCloudSeedlingReader 从 OPPO 接口读,这里只读通知变成的胶囊
-                            val data = (chain.getArg(0) as? List<*>)?.filterNotNull()?.take(128)?.filter(OfficialCloudReflection::isNotification)
+                            val data = (chain.getArg(0) as? List<*>)?.filterNotNull()?.take(128)?.filter(OfficialCloudReflection::isCommon)
                             val known = owner?.let { synchronized(owners) { owners[it] } }
                             if (owner != null && data != null && (known != null || data.isNotEmpty())) {
                                 val ownerId = known ?: synchronized(owners) { owners.getOrPut(owner) { "listener-${ownerSequence.incrementAndGet()}" } }
@@ -177,7 +177,6 @@ object OfficialCloudHook {
                 }
             } catch (failure: Throwable) {
                 generation.hooks.forEach { runCatching { it.unhook() } }
-                OfficialCloudReaderHooks.forget(loader)
                 throw failure
             }
             OfficialCloudSource.reportVisibility()
@@ -293,12 +292,8 @@ object OfficialCloudHook {
         synchronized(generations) { generations.clear() }
         synchronized(owners) { owners.clear() }
         synchronized(scans) { scans.clear() }
-        OfficialCloudReaderHooks.resetForTest()
         scanner = ::scan
     }
-
-    /** 通知变成的胶囊读不读得了:有哪一代装上了通知监听 */
-    fun hasNotificationListeners(): Boolean = synchronized(generations) { generations.any { it.listeners.isNotEmpty() } }
 
     /**
      * 到货诊断(正式包也写进岛的日志):每个监听者按「变化类型、服务号、卡片引擎在不在、内容树有没有」签名写一行,
