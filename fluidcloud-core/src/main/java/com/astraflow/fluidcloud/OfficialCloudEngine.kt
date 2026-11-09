@@ -22,6 +22,10 @@ object OfficialCloudEngine {
 
     fun isBefore17(versionCode: Long): Boolean = versionCode < ENGINE_17_VERSION
 
+    /** 内测反馈包:这台手机上官方卡片引擎(服务应用 [HOST])的版本,以及是不是按 17 以前的引擎画 */
+    fun describe(context: Context): String = context.packageManager.getPackageInfo(HOST, 0)
+        .let { "$HOST ${it.versionName}(${it.longVersionCode}) before17=$before17" }
+
     /** 元素属性按这台手机的引擎取舍:17 以前的引擎不认的属性去掉,并打上 [BEFORE_17] */
     fun attrs(attrs: Map<String, String>, before17: Boolean = this.before17): Map<String, String> =
         if (before17) attrs - ENGINE_17_ATTRS + (BEFORE_17 to "true") else attrs

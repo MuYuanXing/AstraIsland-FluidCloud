@@ -25,6 +25,10 @@ object OfficialCloudSource {
     private var actions: OfficialCloudActions? = null
     @Volatile private var settings = FluidCloudSettings()
     private var reportStatus: (String) -> Unit = {}
+    /** 插件自己的包名与版本号(写进内测反馈包) */
+    private var pluginPackage = ""
+    private var pluginVersion = 0L
+    private var diagnosticsRegistered = false
     /** 检查用:出口就地读取的每一次投递(正式包为空) */
     @Volatile var displayIntakeObserver: ((Any) -> Unit)? = null
 
@@ -54,6 +58,12 @@ object OfficialCloudSource {
         OfficialCloudEngine.bind(context)
         this.settings = settings
         this.reportStatus = reportStatus
+        pluginPackage = packageName
+        pluginVersion = versionCode
+        if (!diagnosticsRegistered) {
+            diagnosticsRegistered = true
+            com.astraisland.events.DiagnosticsRequest.register(context, main, com.astraisland.events.DiagnosticsRequest.PART_PLUGIN, ::diagnostics)
+        }
         if (actions == null) actions = OfficialCloudActions(context)
         // 菜品图这类共享位置里的图在后台取,取好后重新交一次
         OfficialCloudSharedImages.bind(context) { refresh() }
@@ -204,7 +214,10 @@ object OfficialCloudSource {
                 displayAbsent.remove(key)?.let(main::removeCallbacks)
             }
         }
-        if (applied) synchronize()
+        if (applied) {
+            synchronize()
+            OfficialCloudDiagnostics.note(records, store.active().mapTo(HashSet()) { it.nativeKey }, translated.mapValues { it.value.record.page })
+        }
     }
 
     /** 监听者对象已经不在了:它留下的记录撤掉,相应的卡片与藏起的系统胶囊一并恢复 */
@@ -290,6 +303,44 @@ object OfficialCloudSource {
         OfficialCloudYield.refresh()
     }
 
+    /**
+     * 内测反馈包里接入件那一份(开发手册「排查」的「内测反馈包」):主线程上抓下此刻的记录、整理好的内容树、
+     * 出口就地读到的记录和到达记录(通知的附加内容也在这时读出),返回在后台排文字的函数。
+     */
+    private fun diagnostics(): (java.io.File) -> String {
+        val stamp = System.currentTimeMillis()
+        val head = "接入件 $pluginPackage($pluginVersion) 设置=$settings\n星河岛:connected=${AdapterBridge.connected()} " +
+            "islandActive=$islandActive yieldAllowed=$yieldAllowed spent=$spentIdentities\n显示出口(藏系统胶囊)=${OfficialCloudYield.status}"
+        val records = store.active().map { snapshot ->
+            Triple(snapshot, snapshot.notification?.let(OfficialCloudDiagnostics::notificationText), translated[snapshot.nativeKey]?.record?.page)
+        }
+        val display = displayRecords.values.map(OfficialCloudDiagnostics::summary)
+        val notes = noted.toList() + notedUnreadable.map { "display-exit unreadable: $it" }
+        val export = OfficialCloudDiagnostics.export(checkNotNull(context), records.map { it.first to it.third })
+        val engine = context?.let(OfficialCloudEngine::describe)
+        return { resources ->
+            export(resources)
+            val time = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z", java.util.Locale.US)
+            buildString {
+                appendLine("写于 ${time.format(java.util.Date(stamp))}")
+                appendLine(head)
+                appendLine("官方卡片引擎:$engine")
+                appendLine(); appendLine("== 此刻的记录(${records.size} 条,原始数据与整理好的官方内容树)")
+                for ((snapshot, notification, page) in records) {
+                    appendLine("--- ${OfficialCloudDiagnostics.summary(snapshot)}")
+                    appendLine("data=${snapshot.data}")
+                    appendLine("images=${snapshot.images.values.map { "${it.key}(animated=${it.animated} shared=${it.shared} bytes=${it.bytes?.size} bitmap=${it.bitmap?.let { b -> "${b.width}×${b.height}" }})" }}")
+                    notification?.let { appendLine("通知 $it") }
+                    snapshot.remoteData?.let { appendLine("出行界面数据(${it.size} 字节):"); appendLine(String(it, Charsets.UTF_8)) }
+                    appendLine("内容树=${page ?: "(没整理出来,原因见日志里 OfficialCloud 的几行)"}")
+                }
+                appendLine(); appendLine("== 出口就地读到的记录(${display.size} 条)"); display.forEach(::appendLine)
+                appendLine(); appendLine("== 记过一次的问题(读不出、找不到模板)"); notes.forEach(::appendLine)
+                appendLine(); appendLine("== 完整数据与到达记录：附属资源 records.json、timeline.txt；图片与动画在 assets/。")
+            }
+        }
+    }
+
     fun resetForTest() {
         AdapterBridge.stop()
         actions?.close(); actions = null
@@ -305,5 +356,7 @@ object OfficialCloudSource {
         OfficialCloudTemplates.clear()
         OfficialCloudSystemTips.clear()
         OfficialCloudSharedImages.clear()
+        OfficialCloudDiagnostics.clear()
+        diagnosticsRegistered = false
     }
 }
