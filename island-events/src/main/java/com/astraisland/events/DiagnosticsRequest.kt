@@ -25,6 +25,16 @@ object DiagnosticsRequest {
     const val PART_ISLAND = "island"
     const val PART_PLUGIN = "plugin"
 
+    /**
+     * 构建标识:构建脚本随每次打包生成(不改版本号),app 与插件的 manifest 各写一份 metadata
+     * ([METADATA_BUILD_ID]),运行状态正文里各写一行([BUILD_ID_LINE]),反馈包按标识核对
+     * 「系统界面里正在运行的」与「当前安装的」是不是同一次构建。没有标识时不判相同。
+     */
+    const val METADATA_BUILD_ID = "com.astraflow.diagnostics.BUILD_ID"
+
+    /** 运行状态正文里构建标识行的前缀:buildId=<标识> */
+    const val BUILD_ID_LINE = "buildId="
+
     /** 系统界面设备加密区缓存目录下放这两份的子目录名(星流用 root 在系统界面的数据目录下找它) */
     const val DIR = "astraflow-diagnostics"
 
@@ -80,6 +90,12 @@ object DiagnosticsRequest {
             File(dir, statusName(token, part)).writeText(status)
             check(temp.renameTo(target)) { "无法完成诊断文件" }
         } catch (failure: Exception) {
+            val detail = "诊断文件写入失败：" + failure.stackTraceToString()
+            runCatching {
+                val directory = dir(context)
+                File(directory, statusName(token, part)).writeText(FAILED + "\n" + detail)
+                File(directory, fileName(token, part)).writeText(detail)
+            }.onFailure { android.util.Log.e("AstraDiagnostics", "诊断失败经过无法写入: $part", it) }
             android.util.Log.e("AstraDiagnostics", "诊断文件写入失败: $part", failure)
         }
     }

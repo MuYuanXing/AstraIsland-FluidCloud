@@ -28,6 +28,8 @@ object OfficialCloudSource {
     /** 插件自己的包名与版本号(写进内测反馈包) */
     private var pluginPackage = ""
     private var pluginVersion = 0L
+    /** 构建标识(入口在编译期从 BuildConfig.DIAGNOSTIC_BUILD_ID 直传,内测反馈包核对实际构建用) */
+    private var diagnosticBuildId = ""
     private var diagnosticsRegistered = false
     /** 检查用:出口就地读取的每一次投递(正式包为空) */
     @Volatile var displayIntakeObserver: ((Any) -> Unit)? = null
@@ -51,10 +53,11 @@ object OfficialCloudSource {
      * 在系统界面里开始:收下设置、准备执行按钮,向星河岛打招呼。[packageName]、[versionCode] 是插件自己的,星河岛按它核对。
      * [reportStatus] 把「这台手机能不能让系统胶囊让位」报给插件的页面,[reportIsland] 把星河岛收没收下插件报给插件的页面。
      */
-    fun bind(context: Context, settings: FluidCloudSettings, packageName: String, versionCode: Long, reportStatus: (String) -> Unit = {},
-             reportIsland: (String) -> Unit = {}) {
+    fun bind(context: Context, settings: FluidCloudSettings, packageName: String, versionCode: Long, diagnosticBuildId: String,
+             reportStatus: (String) -> Unit = {}, reportIsland: (String) -> Unit = {}) {
         check(Looper.myLooper() == Looper.getMainLooper())
         this.context = context
+        this.diagnosticBuildId = diagnosticBuildId
         OfficialCloudEngine.bind(context)
         this.settings = settings
         this.reportStatus = reportStatus
@@ -309,6 +312,7 @@ object OfficialCloudSource {
      */
     private fun diagnostics(): (java.io.File) -> String {
         val stamp = System.currentTimeMillis()
+        val ended = store.endedIdentities()
         val head = "接入件 $pluginPackage($pluginVersion) 设置=$settings\n星河岛:connected=${AdapterBridge.connected()} " +
             "islandActive=$islandActive yieldAllowed=$yieldAllowed spent=$spentIdentities\n显示出口(藏系统胶囊)=${OfficialCloudYield.status}"
         val records = store.active().map { snapshot ->
@@ -324,7 +328,9 @@ object OfficialCloudSource {
             buildString {
                 appendLine("写于 ${time.format(java.util.Date(stamp))}")
                 appendLine(head)
+                appendLine("buildId=${diagnosticBuildId.ifBlank { "(读不到)" }}")
                 appendLine("官方卡片引擎:$engine")
+                appendLine("结束封存(ended):${ended.size} 件${if (ended.isEmpty()) "" else "=" + ended.sorted().take(64).joinToString(",")}${if (ended.size > 64) " 等" else ""}")
                 appendLine(); appendLine("== 此刻的记录(${records.size} 条,原始数据与整理好的官方内容树)")
                 for ((snapshot, notification, page) in records) {
                     appendLine("--- ${OfficialCloudDiagnostics.summary(snapshot)}")

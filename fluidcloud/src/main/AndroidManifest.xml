@@ -34,6 +34,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.FluidCloud">
 
+        <meta-data android:name="com.astraflow.diagnostics.BUILD_ID" android:value="${diagnosticBuildId}" />
+
         <!-- LSPosed 识别模块(入口在 META-INF/xposed/java_init.list) -->
         <meta-data
             android:name="xposedmodule"

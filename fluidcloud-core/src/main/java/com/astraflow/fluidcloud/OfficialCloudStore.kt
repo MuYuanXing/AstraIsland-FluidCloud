@@ -35,6 +35,8 @@ class OfficialCloudStore {
         }
 
     fun clear() { owners.clear(); ended.clear() }
+    /** 结束封存的事件身份(诊断用):系统明确结束过的那些,不再上岛;重连后星河岛据此不再重显已亮完的提示 */
+    fun endedIdentities(): Set<String> = ended.toSet()
     /** 已经不在的监听者留下的记录一并撤掉(插件重载后换了新对象),不留下永远不会结束的卡片。 */
     fun removeOwners(dead: Set<String>): Boolean = owners.keys.removeAll(dead)
 

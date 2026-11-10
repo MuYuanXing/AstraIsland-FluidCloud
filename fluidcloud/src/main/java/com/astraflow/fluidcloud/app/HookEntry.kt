@@ -93,6 +93,7 @@ class HookEntry : XposedModule() {
         val remote = SystemUiSettings(this, app) { OfficialCloudSource.onSettingsChanged(it) }
         settings = remote
         OfficialCloudSource.bind(app, remote.current(), BuildConfig.APPLICATION_ID, BuildConfig.VERSION_CODE.toLong(),
+            BuildConfig.DIAGNOSTIC_BUILD_ID,
             reportStatus = { SystemUiStatus.report(PluginStatus.KEY_CAPSULE, it) },
             reportIsland = { SystemUiStatus.report(PluginStatus.KEY_ISLAND, it) })
         Log.i(TAG, "started")
