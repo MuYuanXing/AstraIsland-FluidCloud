@@ -85,7 +85,7 @@ object DiagnosticsRequest {
     }
 
     private val SECRET_KEY = Regex(
-        "token|password|passwd|secret|session|vault|hmac|cookie|auth|credential|device_?id|signature|private",
+        "token|password|passwd|secret|session|vault|hmac|cookie|auth|credential|device_?id|device_?key|signature|private",
         RegexOption.IGNORE_CASE,
     )
 
