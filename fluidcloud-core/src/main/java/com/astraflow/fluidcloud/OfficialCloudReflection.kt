@@ -171,7 +171,7 @@ object OfficialCloudReflection {
         if (!pkg.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+"))) return null
         val user = model.user.takeIf { it >= 0 } ?: return null
         val serviceId = text(call(service, "getServiceId")).takeIf { it.isNotBlank() } ?: return null
-        val instance = text(call(service, "getServiceInstanceId")).ifBlank { text(call(service, "getInstanceId")) }
+        val instance = text(call(service, "getServiceInstanceId"))
         val nativeKey = model.key
         val time = (call(service, "getTimeStamp") as? Number)?.toLong() ?: return null
         val images = linkedMapOf<String, CloudImage>()
