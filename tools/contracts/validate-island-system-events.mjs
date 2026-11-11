@@ -36,7 +36,7 @@ const bridgeValue = key => constant(bridge, key)?.[1]
 
 if (standard.bridge.version !== Number(constant(bridge, 'VERSION')?.[2])) fail('显示交接交换版本不一致')
 else pass('显示交接交换版本一致')
-expectSet('事件交换字段', standard.bridge.events, ['KEY_EVENTS', 'KEY_SETTINGS', 'KEY_ALIVE'].map(bridgeValue))
+expectSet('事件交换字段', standard.bridge.events, ['KEY_EVENTS', 'KEY_SETTINGS', 'KEY_ALIVE', 'KEY_ENDED'].map(bridgeValue))
 expectSet('星河岛报的情况', standard.bridge.state, ['KEY_SPENT', 'KEY_ACTIVE', 'KEY_YIELD_ALLOWED'].map(bridgeValue))
 if (standard.codec.version !== Number(constant(codec, 'VERSION')?.[2])) fail('编码版本不一致')
 else pass('编码版本一致')

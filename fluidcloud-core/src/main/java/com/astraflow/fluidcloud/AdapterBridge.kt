@@ -55,6 +55,7 @@ object AdapterBridge {
                     putBundle(EventBridge.KEY_EVENTS, SystemEventCodec.encode(emptyList()))
                     putBundle(EventBridge.KEY_SETTINGS, Bundle(settings))
                     putStringArray(EventBridge.KEY_ALIVE, emptyArray())
+                    putStringArray(EventBridge.KEY_ENDED, emptyArray())
                 })
             }
             // 空接手决定是无需事件身份的释放:系统胶囊与卡片按系统自己的名单恢复显示。
@@ -136,7 +137,7 @@ object AdapterBridge {
     const val STATUS_REFUSED = "refused:"
 
     /** 把全部事件和接入件的设置交给星河岛 */
-    fun push(events: List<SystemEvent>, settings: FluidCloudSettings, alive: Set<String>) {
+    fun push(events: List<SystemEvent>, settings: FluidCloudSettings, alive: Set<String>, ended: Set<String>) {
         if (!accepted) return
         val settingsBundle = settings.toBundle()
         // 停止时交还的是「全部事件为空」,接入件的设置照旧:岛上的四类开关不能因为一次停止被改掉。
@@ -145,6 +146,7 @@ object AdapterBridge {
             putBundle(EventBridge.KEY_EVENTS, SystemEventCodec.encode(events))
             putBundle(EventBridge.KEY_SETTINGS, settingsBundle)
             putStringArray(EventBridge.KEY_ALIVE, alive.toTypedArray())
+            putStringArray(EventBridge.KEY_ENDED, ended.toTypedArray())
         })
     }
 }

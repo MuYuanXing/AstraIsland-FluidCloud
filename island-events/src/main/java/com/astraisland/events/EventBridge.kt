@@ -14,7 +14,7 @@ import java.util.function.Function
  */
 object EventBridge {
     /** 见面与交换的版本;两边不一样时不交换 */
-    const val VERSION = 3
+    const val VERSION = 4
 
     /** System.getProperties() 里放两边入口的键 */
     const val ISLAND = "com.astraisland.events.island"
@@ -45,6 +45,8 @@ object EventBridge {
     const val KEY_SETTINGS = "settings"
     /** 系统尚未结束的事件身份,不以本次是否读到可显示内容判断结束。 */
     const val KEY_ALIVE = "alive"
+    /** 系统名单移除或内容明确结束的事件身份；接入停止、监听者重新加载不属于结束。 */
+    const val KEY_ENDED = "ended"
 
     // ── 星河岛 → 接入件 ──
     /** 星河岛到了(接入件先到时由星河岛发):接入件收到后打招呼 */

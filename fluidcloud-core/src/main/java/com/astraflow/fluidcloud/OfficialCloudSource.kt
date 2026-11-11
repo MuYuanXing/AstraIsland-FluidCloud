@@ -223,7 +223,7 @@ object OfficialCloudSource {
         }
     }
 
-    /** 监听者对象已经不在了:它留下的记录撤掉,相应的卡片与藏起的系统胶囊一并恢复 */
+    /** 监听者重新加载时撤下其内容；不作为系统事件结束，不清除岛侧短时提示期限。 */
     fun dropOwners(owners: Set<String>) {
         main.post { if (store.removeOwners(owners)) synchronize() }
     }
@@ -250,7 +250,7 @@ object OfficialCloudSource {
         }
         translated.keys.retainAll(live)
         actions?.retain(store.active().mapTo(HashSet()) { it.key })
-        AdapterBridge.push(events, settings, store.aliveIdentities())
+        AdapterBridge.push(events, settings, store.aliveIdentities(), store.endedIdentities())
     }
 
     /**
