@@ -137,6 +137,16 @@ dependencies {
     implementation(libs.compose.ui)
     // 设置页的部件原样用上游 compose-hig(分组列表、开关、打开下一页的行);顶部栏的玻璃取页面画面要用 backdrop
     implementation(libs.compose.hig)
+    // 图标库依赖的官方版本排序高于补丁版,整套部件必须锁定到版本表中的 fork。
+    val astraflowHigVersion = libs.versions.compose.hig.asProvider().get()
+    configurations.all {
+        resolutionStrategy.force(
+            "zone.ien.hig:hig:$astraflowHigVersion",
+            "zone.ien.hig:hig-android:$astraflowHigVersion",
+            "zone.ien.hig:hig-core:$astraflowHigVersion",
+            "zone.ien.hig:hig-core-android:$astraflowHigVersion",
+        )
+    }
     // 右上角使用说明的问号:上游 compose-hig 的 iOS 样子扩展图标(和星流同一个图形)
     implementation(libs.compose.hig.icons)
     implementation(libs.kyant.backdrop)

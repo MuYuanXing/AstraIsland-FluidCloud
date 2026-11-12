@@ -16,6 +16,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // 补丁版使用独立版本后缀,官方构件仍从公共仓库解析。
+        mavenLocal()
     }
 }
 

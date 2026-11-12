@@ -34,6 +34,15 @@ jobs:
           sed -i 's/^AndroidVersion.ApiLevel=.*/AndroidVersion.ApiLevel=37/; s/^Pkg.Desc=.*/Pkg.Desc=Android SDK Platform 37/' "$DEST/source.properties"
           sed -i 's#path="platforms;android-37.0"#path="platforms;android-37"#; s#<api-level>37.0</api-level>#<api-level>37</api-level>#; s#Android SDK Platform 37.0#Android SDK Platform 37#' "$DEST/package.xml"
       - uses: gradle/actions/setup-gradle@v4
+      - name: Checkout shared UI library
+        uses: actions/checkout@v4
+        with:
+          repository: MuYuanXing/compose-hig-astraflow
+          ref: astraflow-perf
+          path: build/compose-hig
+      - name: Prepare shared UI library
+        working-directory: build/compose-hig
+        run: ./gradlew :hig:publishToMavenLocal :hig-core:publishToMavenLocal --no-daemon --no-parallel --max-workers=2
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
